@@ -55,13 +55,18 @@ Read `docs/protocol.md` before touching device code, and `docs/research-notes.md
 
 `device/` runs serial I/O on one background thread, handles reconnects, and emits Qt signals.
 `render/` draws the whole canvas with QPainter: keys, then faces from `render/faces.py`, whose option lists drive the
-editor forms through `schema.Field`.
+editor forms through `schema.Field`. `render/meters.py` draws level meters behind keys and on the small screen.
+`system/audio.py` reads and changes the speakers and microphone (Core Audio through ctypes on Windows, `pactl` and
+`parec` on Linux) on its own thread; live levels are only measured while a page on screen shows one.
+`conditions.py` holds the one condition evaluator, shared by context rules (which switch pages) and key *states*
+(which repaint a key while something is true — that's what makes a mute key show the real mute state).
 `controller.py` is the hub. It owns pages, presses, rules (edge-triggered: they act only when the result changes),
 variables, debounced saving and undo snapshots (device settings are kept out of undo).
 `actions.py` runs key actions on a worker thread; actions that touch the app (page, variable, message, brightness,
-open) come back through a signal.
+open) come back through a signal. The `audio` action goes straight to the audio monitor, which is shared.
 `ui/` holds the window. Editors edit the config dicts in place and call `controller.edited()`.
 Wrap any dialog in `widgets.dialog_open()` so a page switch can't reload the editor underneath it.
+`ui/condition_row.py` is the one condition editor widget, used by both context rules and key states.
 
 ## Commits
 

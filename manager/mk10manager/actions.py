@@ -11,6 +11,7 @@ import urllib.request
 from PySide6.QtCore import QObject, Signal
 
 from .schema import Field, fill_defaults
+from .system import audio as audio_mod
 from .system import inputs
 
 ACTION_TYPES = {
@@ -20,6 +21,12 @@ ACTION_TYPES = {
     ]),
     "text": ("Type text", [
         Field("text", "Text", "multiline", ""),
+    ]),
+    "audio": ("Speakers or microphone", [
+        Field("target", "What", "choice", audio_mod.OUTPUT, audio_mod.TARGETS),
+        Field("mode", "Do", "choice", "toggle_mute", audio_mod.MODES),
+        Field("value", "Step or level (%)", "int", 5, minimum=0, maximum=100,
+              show_if=("mode", ("volume_up", "volume_down", "set_volume"))),
     ]),
     "media": ("Media key", [
         Field("key", "Key", "choice", "play_pause", inputs.MEDIA_KEYS),
@@ -84,6 +91,14 @@ def summary(action: dict, page_name=lambda pid: pid) -> str:
         return "Type  “%s”" % (s[:30] + ("..." if len(s) > 30 else ""))
     if t == "media":
         return dict(inputs.MEDIA_KEYS).get(a["key"], a["key"])
+    if t == "audio":
+        what = "the microphone" if a["target"] == audio_mod.INPUT else "the speakers"
+        mode = dict(audio_mod.MODES).get(a["mode"], a["mode"])
+        if a["mode"] in ("volume_up", "volume_down"):
+            return "%s on %s by %s%%" % (mode, what, a["value"])
+        if a["mode"] == "set_volume":
+            return "Set %s to %s%%" % (what, a["value"])
+        return "%s on %s" % (mode, what)
     if t == "open":
         return "Open  %s" % (a["target"] or "(not set)")
     if t == "command":
@@ -175,8 +190,9 @@ class ActionRunner(QObject):
     ui_action = Signal(dict)
     failed = Signal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, audio=None, parent=None):
         super().__init__(parent)
+        self.audio = audio
         self._q = queue.Queue()
         self._thread = threading.Thread(target=self._loop, name="actions", daemon=True)
         self._thread.start()
@@ -209,6 +225,16 @@ class ActionRunner(QObject):
             ok, msg = inputs.type_text(a.get("text", ""))
         elif t == "media":
             ok, msg = inputs.media(a.get("key", "play_pause"))
+        elif t == "audio":
+            if self.audio is None:
+                ok, msg = False, audio_mod.NullAudio.note
+            else:
+                try:
+                    value = int(a.get("value") or 0)
+                except (TypeError, ValueError):
+                    value = 0
+                ok, msg = self.audio.apply(a.get("target") or audio_mod.OUTPUT,
+                                           a.get("mode") or "toggle_mute", value)
         elif t == "delay":
             try:
                 ms = int(a.get("ms") or 0)

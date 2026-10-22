@@ -35,6 +35,7 @@ class MainWindow(QMainWindow):
             "variables": lambda: sorted(set(self.ctl.config.variables) |
                                         {r.get("name") for r in self.ctl.config.rules
                                          if r.get("when") == "variable" and r.get("name")}),
+            "icons": ctl.renderer.icons,
         }
 
         # ---- toolbar: pages, undo, connection

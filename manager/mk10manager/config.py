@@ -23,6 +23,8 @@ DEFAULT_SETTINGS = {
     "default_page": None,          # page id; None = first page
     "fallback_to_default": True,   # when no rule matches after a context change, go to the default page
     "tray_hint_shown": False,
+    "audio_levels": True,          # measure how loud the speakers and microphone are, for the meters
+    "meter_fps": 6,                # redraws a second while a live meter is on screen
 }
 
 
@@ -71,6 +73,8 @@ def new_key(label: str = "", bg: str = "#2C2C2A") -> dict:
         "icon": None,          # {"kind": "builtin", "name": ..., "color": ...} or {"kind": "file", "path": ...}
         "icon_size": 62,       # percent of the key
         "actions": [],
+        "states": [],          # context states: the first matching one changes how the key looks
+        "meter": {"source": "none"},   # background level meter, see render/meters.py
     }
 
 
@@ -82,21 +86,36 @@ def _icon(name, color="#FFFFFF"):
     return {"kind": "builtin", "name": name, "color": color}
 
 
+def _mute_state(when: str, icon: str, label: str) -> dict:
+    """A key state: when this is muted, go orange and show the crossed-out icon."""
+    from .conditions import new_state
+    s = new_state(when)
+    s.update({"use_bg": True, "bg": "#854F0B", "use_label": True, "label": label,
+              "icon_mode": "choose", "icon": icon, "icon_color": "#FFFFFF"})
+    return s
+
+
 def default_config() -> dict:
     blue, orange = "#185FA5", "#854F0B"
     keys = [None] * KEY_COUNT
     samples = [
-        ("Mute", "volume-off", blue, [{"type": "media", "key": "mute"}]),
+        ("Mute", "volume", blue, [{"type": "audio", "target": "output", "mode": "toggle_mute"}]),
         ("Play", "player-play", orange, [{"type": "media", "key": "play_pause"}]),
         ("Next", "player-skip-forward", blue, [{"type": "media", "key": "next"}]),
         ("Vol -", "volume-2", orange, [{"type": "media", "key": "volume_down"}]),
         ("Vol +", "volume", blue, [{"type": "media", "key": "volume_up"}]),
+        ("Mic", "microphone", blue, [{"type": "audio", "target": "input", "mode": "toggle_mute"}]),
     ]
     for i, (label, icon, bg, actions) in enumerate(samples):
         k = new_key(label, bg)
         k["icon"] = _icon(icon)
         k["actions"] = actions
         keys[i] = k
+    # The two mute keys say what the sound is actually doing, and show how loud it is behind the icon.
+    keys[0]["states"] = [_mute_state("output_muted", "volume-off", "Muted")]
+    keys[0]["meter"] = {"source": "output_level", "style": "bar_bottom", "color": "#378ADD", "strength": 80}
+    keys[5]["states"] = [_mute_state("input_muted", "microphone-off", "Mic off")]
+    keys[5]["meter"] = {"source": "input_level", "style": "bar_bottom", "color": "#EF9F27", "strength": 80}
     page = {"id": new_id(), "name": "Main", "keys": keys, "screen": default_screen()}
     return {
         "version": CONFIG_VERSION,

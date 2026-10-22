@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from ..system.audio import INPUT, OUTPUT, AudioState
+
 PLACEHOLDER = re.compile(r"\{([a-zA-Z_]+)(?::([^{}]*))?\}")
 
 HELP = (
@@ -15,7 +17,12 @@ HELP = (
     "{app}  active app      {title}  active window title\n"
     "{page}  current page name\n"
     "{var:mode}  value of the variable named mode\n"
-    "{output}  output of this face's command"
+    "{output}  output of this face's command\n"
+    "{out_device}  {in_device}  the speakers and microphone in use\n"
+    "{volume}  {mic_volume}  their volume, 0-100\n"
+    "{level}  {mic_level}  how loud they are right now, 0-100\n"
+    "{mute}  {mic_mute}  “muted”, or nothing when they aren't\n"
+    "{mute:Muted|Live}  your own two words instead"
 )
 
 
@@ -29,6 +36,7 @@ class RenderContext:
     variables: dict = field(default_factory=dict)
     outputs: dict = field(default_factory=dict)       # command -> latest output
     font_family: str = ""
+    audio: AudioState = field(default_factory=AudioState)
 
 
 def format_time(now: datetime, h24: bool, seconds: bool = False) -> str:
@@ -70,6 +78,21 @@ def expand(text: str, ctx: RenderContext, output: str = "") -> str:
             return str(ctx.variables.get((arg or "").strip(), ""))
         if name == "output":
             return output
+        audio = ctx.audio or AudioState()
+        side = audio.side(INPUT if name.startswith("mic_") or name.startswith("in_") else OUTPUT)
+        if name in ("out_device", "in_device"):
+            return side.name
+        if name in ("volume", "mic_volume"):
+            return "" if side.volume is None else str(side.volume)
+        if name in ("level", "mic_level"):
+            return str(int(round(side.level * 100))) if audio.available else ""
+        if name in ("mute", "mic_mute"):
+            words = [w.strip() for w in (arg or "").split("|")]
+            on = words[0] if words and words[0] else "muted"
+            off = words[1] if len(words) > 1 else ""
+            if side.muted is None:
+                return ""
+            return on if side.muted else off
         return m.group(0)
 
     return PLACEHOLDER.sub(sub, text)
