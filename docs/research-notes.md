@@ -74,9 +74,21 @@ Local side channels are worth more than they look:
 - **Microphone in use.** Windows: enumerate Core Audio sessions, or read
   `HKCU\...\CapabilityAccessManager\ConsentStore\microphone\NonPackaged\<app>` where `LastUsedTimeStop == 0`
   means in use right now. Linux: `pactl list source-outputs` says which app holds a capture stream.
-  Language-independent, survives Teams updates, and gives a call timer for free.
+  Language-independent and survives Teams updates. Worth having as a "something is listening right now"
+  indicator and as a cross-app trigger (it fires for Zoom, Meet and Discord too), **not** as a clock: elapsed
+  call time isn't the number anyone wants.
 - **Window title** (we already watch it) sometimes carries the meeting subject.
-- **Calendar** (Graph `/me/calendarView`, or a local `.ics`) gives the scheduled start, so "10 minutes over" is possible.
+- **Calendar.** The only source of what the meeting is *scheduled* for — subject, start, end, organiser, the
+  invited attendee list, and whether it's an online meeting. Nothing in Teams is needed, and nothing here is
+  being retired. Three ways in:
+  - **Classic Outlook COM** on Windows (`Outlook.Application`, MAPI). No app registration, no OAuth, no admin
+    consent — which matters a lot on a locked-down work PC. Dead end if the machine has "new Outlook", which
+    has no COM.
+  - **Graph `/me/calendarView`**, delegated `Calendars.Read`. Works on both platforms. Needs an Entra app
+    registration; `Calendars.Read` is a common user-consentable scope, so less likely to need admin consent
+    than `Presence.Read.All`, but a tenant can still block it.
+  - **A published `.ics` URL** the manager polls. Trivial to consume, but many tenants disable calendar
+    publishing.
 - Teams' own `Ctrl+Shift+M` only works while Teams has focus, so sending keystrokes is not a global mute.
 
 ### Verdict per ask
@@ -85,8 +97,12 @@ Local side channels are worth more than they look:
   are what Teams uses unless someone overrode it inside Teams, and that override lives in Teams' own opaque
   settings store.
 - **Time:** done.
-- **Meeting length:** feasible from the microphone-in-use signal, to within a few seconds. Difficulty 2/5.
-- **Number of people:** Windows-only and fragile (UI scraping), or a meeting bot. Difficulty 4/5. Not worth it.
+- **Meeting length:** what's wanted is the *scheduled* time — "on until 10:15, 4 minutes left" — so this is a
+  calendar job, not a Teams one. Classic Outlook COM on the work PC, Graph `calendarView` otherwise.
+  Difficulty 2/5 via COM, 3/5 via Graph (the consent policy is the risk, not the code).
+- **Number of people:** the *invited* count comes free with the calendar entry, which may be close enough to
+  show. Who is actually in the room needs UI scraping (Windows-only, fragile) or a meeting bot.
+  Difficulty 4/5 for the real thing. Not worth it.
 - **Who is speaking:** a meeting bot only. Difficulty 5/5. Drop it.
 - **Mute:** the OS microphone mute (shipped) is what hardware mute buttons do now that the Teams API is gone.
   Whether Teams shows "muted by your system" in current builds is untested on real hardware.
