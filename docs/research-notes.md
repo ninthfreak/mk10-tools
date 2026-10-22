@@ -66,7 +66,8 @@ It never offered participant count, who is speaking, or which audio devices Team
 | UI Automation scraping (what MuteDeck does now) | mute, camera, in-a-call; roster count with effort | breaks on Teams UI changes, language-dependent | Windows |
 | `teams-for-linux` (Electron wrapper) MQTT / D-Bus | a status object (mic, camera), plus toggle-mute / toggle-video / raise-hand commands | you run their wrapper instead of the PWA; their own issue tracker shows mute detection breaking against current Teams | Linux |
 | Graph `/me/presence` | availability and activity (`InAMeeting`, `InACall`, `Presenting`) | Entra app registration; delegated `Presence.Read`, or `Presence.Read.All` for change notifications (1-hour subscriptions, renewed by PATCH); no personal accounts; a work tenant will probably want admin consent | anywhere |
-| Graph Communications calling bot | the only supported live roster **and** active speaker | an Azure-hosted bot with application permissions and admin consent, which **joins the meeting as a visible participant** | anywhere, but socially unacceptable at a desk |
+| Graph Communications calling bot | live roster **and** active speaker | an Azure-hosted bot with application permissions and admin consent, which **joins the meeting as a visible participant** | anywhere, but socially unacceptable at a desk |
+| Teams **app platform** (apps that run *inside* Teams — see below) | meeting start/end and participant join/leave events, meeting details, "someone is speaking", and the active-speaker list under RSC | a Teams app package installed in the meeting or chat, a bot with a public HTTPS endpoint for the server-side half, and a relay you host to get any of it back to the desktop | anywhere, but it's a cloud service, not a local read |
 | Local side channels, no Teams cooperation needed | "the microphone is open, so I'm in a call", and a timer from when it opened | nothing | both |
 
 Local side channels are worth more than they look:
@@ -101,11 +102,31 @@ Local side channels are worth more than they look:
   calendar job, not a Teams one. Classic Outlook COM on the work PC, Graph `calendarView` otherwise.
   Difficulty 2/5 via COM, 3/5 via Graph (the consent policy is the risk, not the code).
 - **Number of people:** the *invited* count comes free with the calendar entry, which may be close enough to
-  show. Who is actually in the room needs UI scraping (Windows-only, fragile) or a meeting bot.
-  Difficulty 4/5 for the real thing. Not worth it.
-- **Who is speaking:** a meeting bot only. Difficulty 5/5. Drop it.
+  show. Who is actually in the room needs UI scraping (Windows-only, fragile), or a Teams app: participant
+  join/leave real-time events plus `GetParticipant`, with RSC scopes in the manifest and the event switched on
+  in the Developer Portal. Difficulty 4/5 for the real thing. Not worth it for this device.
+- **Who is speaking:** not *only* a calling bot, as first written here. The Teams app platform has an RSC
+  permission `OnlineMeetingActiveSpeaker.Read.Chat` — "read the participants who are sending audio into the
+  meetings associated with this chat" — delegated, consented by installing the app in the chat rather than by
+  a tenant admin. It does not cover standalone or channel meetings, and nobody seems to have posted working
+  code for it. The in-client `meeting.registerSpeakingStateChangeHandler` is easy by comparison but only says
+  *someone* is speaking (`isSpeakingDetected`), never who. Either way it needs a Teams app, so difficulty
+  stays 4-5/5 for a desk device. Still not worth it, but the route exists.
 - **Mute:** the OS microphone mute (shipped) is what hardware mute buttons do now that the Teams API is gone.
   Whether Teams shows "muted by your system" in current builds is untested on real hardware.
+  The app platform does **not** change this: `meeting.toggleIncomingClientAudio` only mutes *incoming*
+  (speaker) audio, and a developer on Microsoft's own forum reports finding no way to read Teams' mute state
+  at all. `updateMicState` appears in the TeamsJS changelog from 2.8.0 but looks tied to apps that have taken
+  over audio handling; unverified.
+
+### Why the app platform doesn't rescue a desk device
+
+`apps-in-teams-meetings/meeting-apps-apis` is the **Teams app platform**: code that runs *inside* Teams, as a
+side panel, meeting stage or bot. There is no local endpoint. To reach the MK10 Manager the chain would be:
+a Teams app package installed in the meeting (custom app upload is often blocked on a work tenant) → a bot
+with a public HTTPS endpoint registered in Azure → a relay service you host → the manager polling it. That is
+a cloud service you own and operate, to learn things the sound card can't tell you. Worth knowing the route
+is real and supported; not worth building for ten keys and a small screen.
 
 ## Status (October 2026)
 
