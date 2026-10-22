@@ -9,8 +9,11 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout, Q
                                QVBoxLayout, QWidget)
 
 from ..actions import ACTION_TYPES, new_action, summary
+from ..conditions import CONDITIONS, STATE_LOOK_FIELDS, describe_state, new_state
 from ..config import new_key, store_image
+from ..render.meters import METER_FIELDS
 from ..render.template import HELP
+from .condition_row import ConditionRow
 from .icon_picker import IconPicker
 from .widgets import ColorButton, Form, PlainEdit, dialog_open, help_button
 
@@ -28,6 +31,8 @@ class KeyEditor(QWidget):
         self.key = None
         self._loading = False
         self.step_form = None
+        self.meter_form = None
+        self.state_widgets = []
 
         outer = QVBoxLayout(self)
         head = QHBoxLayout()
@@ -147,6 +152,50 @@ class KeyEditor(QWidget):
         self.step_layout = QVBoxLayout(self.step_box)
         al.addWidget(self.step_box)
         bl.addWidget(acts)
+
+        # the background meter
+        meter_box = QGroupBox("Background meter")
+        self.meter_layout = QVBoxLayout(meter_box)
+        bl.addWidget(meter_box)
+
+        # context states
+        st = QGroupBox("Changes with context")
+        sl = QVBoxLayout(st)
+        tip = QLabel("Give the key a different look while something is true — muted, an app is in front, "
+                     "a variable is set. The first one that fits wins.")
+        tip.setWordWrap(True)
+        tip.setStyleSheet("color: gray;")
+        sl.addWidget(tip)
+        self.states = QListWidget()
+        self.states.setMaximumHeight(110)
+        self.states.setTextElideMode(Qt.ElideRight)
+        self.states.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        sl.addWidget(self.states)
+        srow = QHBoxLayout()
+        add_state = QToolButton()
+        add_state.setText("Add a state")
+        add_state.setPopupMode(QToolButton.InstantPopup)
+        add_state.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        smenu = QMenu(add_state)
+        for kind, label in CONDITIONS:
+            smenu.addAction(label).setData(kind)
+        smenu.triggered.connect(lambda a: self._add_state(a.data()))
+        add_state.setMenu(smenu)
+        self.sb_del = QPushButton("Remove")
+        self.sb_up = QPushButton("Up")
+        self.sb_down = QPushButton("Down")
+        self.sb_del.clicked.connect(self._del_state)
+        self.sb_up.clicked.connect(lambda: self._move_state(-1))
+        self.sb_down.clicked.connect(lambda: self._move_state(1))
+        for w in (add_state, self.sb_del, self.sb_up, self.sb_down):
+            srow.addWidget(w)
+        srow.addStretch(1)
+        sl.addLayout(srow)
+        self.state_box = QGroupBox("State")
+        self.state_layout = QVBoxLayout(self.state_box)
+        sl.addWidget(self.state_box)
+        bl.addWidget(st)
+
         clear = QPushButton("Clear this key")
         clear.clicked.connect(self._clear)
         bl.addWidget(clear, 0, Qt.AlignLeft)
@@ -163,6 +212,7 @@ class KeyEditor(QWidget):
         self.icon_color.colorChanged.connect(self._icon_color)
         self.icon_size.valueChanged.connect(self._icon_size)
         self.steps.currentRowChanged.connect(self._show_step)
+        self.states.currentRowChanged.connect(self._show_state)
 
     @staticmethod
     def _wrap(layout):
@@ -195,6 +245,8 @@ class KeyEditor(QWidget):
             self.icon_size_label.setText("%d%%" % self.icon_size.value())
             self._refresh_icon()
             self._fill_steps()
+            self._build_meter()
+            self._fill_states()
         finally:
             self._loading = False
 
@@ -352,6 +404,93 @@ class KeyEditor(QWidget):
         self.step_form = Form(fields, a, self.providers)
         self.step_form.changed.connect(lambda _k, row=row: self._step_changed(row))
         self.step_layout.addWidget(self.step_form)
+
+    # ---- background meter
+    def _build_meter(self):
+        if self.meter_form is not None:
+            self.meter_form.setParent(None)
+            self.meter_form.deleteLater()
+            self.meter_form = None
+        if self.key is None:
+            return
+        meter = self.key.setdefault("meter", {"source": "none"})
+        self.meter_form = Form(METER_FIELDS, meter, self.providers)
+        self.meter_form.changed.connect(lambda _k: self._meter_changed())
+        self.meter_layout.addWidget(self.meter_form)
+
+    def _meter_changed(self):
+        if not self._loading:
+            self.changed.emit()
+
+    # ---- context states
+    def _fill_states(self):
+        row = self.states.currentRow()
+        self.states.blockSignals(True)
+        self.states.clear()
+        for st in (self.key or {}).get("states") or []:
+            self.states.addItem(QListWidgetItem(describe_state(st)))
+        self.states.blockSignals(False)
+        n = self.states.count()
+        if n:
+            self.states.setCurrentRow(min(max(row, 0), n - 1))
+        self._show_state(self.states.currentRow())
+
+    def _add_state(self, kind):
+        if self.key is None:
+            return
+        self.key.setdefault("states", []).append(new_state(kind))
+        self._fill_states()
+        self.states.setCurrentRow(self.states.count() - 1)
+        self.changed.emit()
+
+    def _del_state(self):
+        i = self.states.currentRow()
+        states = (self.key or {}).get("states") or []
+        if 0 <= i < len(states):
+            del states[i]
+            self._fill_states()
+            self.changed.emit()
+
+    def _move_state(self, d):
+        i = self.states.currentRow()
+        states = (self.key or {}).get("states") or []
+        j = i + d
+        if 0 <= i < len(states) and 0 <= j < len(states):
+            states[i], states[j] = states[j], states[i]
+            self._fill_states()
+            self.states.setCurrentRow(j)
+            self.changed.emit()
+
+    def _show_state(self, row):
+        for w in self.state_widgets:
+            w.setParent(None)
+            w.deleteLater()
+        self.state_widgets = []
+        states = (self.key or {}).get("states") or []
+        has = 0 <= row < len(states)
+        self.state_box.setVisible(has)
+        self.sb_del.setEnabled(has)
+        self.sb_up.setEnabled(has and row > 0)
+        self.sb_down.setEnabled(has and row < len(states) - 1)
+        if not has:
+            return
+        st = states[row]
+        self.state_box.setTitle("State %d" % (row + 1))
+        cond = ConditionRow(st, self.providers)
+        cond.changed.connect(lambda row=row: self._state_changed(row))
+        form = Form(STATE_LOOK_FIELDS, st, self.providers)
+        form.changed.connect(lambda _k, row=row: self._state_changed(row))
+        for w in (cond, form):
+            self.state_layout.addWidget(w)
+            self.state_widgets.append(w)
+
+    def _state_changed(self, row):
+        states = (self.key or {}).get("states") or []
+        if 0 <= row < len(states):
+            it = self.states.item(row)
+            if it:
+                it.setText(describe_state(states[row]))
+        self.changed.emit()
 
     def _step_changed(self, row):
         acts = self.key.get("actions") or []

@@ -9,6 +9,8 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen, QTextOption
 
 from ..schema import Field, fill_defaults
+from ..system.audio import INPUT, OUTPUT
+from . import meters
 from .template import HELP, RenderContext, expand, format_time, uses_seconds
 
 BLUE, ORANGE, LIGHT, GREY, DIM = "#378ADD", "#EF9F27", "#F1EFE8", "#888780", "#B4B2A9"
@@ -63,6 +65,10 @@ class Face:
     def command(self, opts) -> tuple[str, int] | None:
         """(shell command, refresh seconds) if this face shows command output."""
         return None
+
+    def live_targets(self, opts) -> set:
+        """Which live sound levels this face needs measured (see system.audio)."""
+        return set()
 
     def paint(self, p: QPainter, rect: QRectF, opts: dict, ctx: RenderContext, output: str = ""):
         raise NotImplementedError
@@ -317,6 +323,112 @@ class ImageFace(Face):
         p.drawImage(target, img, src)
 
 
+class AudioFace(Face):
+    """What the speakers and microphone are doing: which devices, how loud, and whether they're muted."""
+
+    id = "audio"
+    label = "Sound"
+    options = [
+        Field("bg", "Background", "color", "#000000"),
+        Field("top_text", "Text at the top", "template", "{time}", help=COMMON_TEXT_HELP),
+        Field("bottom_text", "Text at the bottom", "template", "", help=COMMON_TEXT_HELP),
+        Field("text_color", "Text colour", "color", LIGHT),
+        Field("text_size", "Text size", "int", 30, minimum=10, maximum=60),
+        Field("show_output", "Show the speakers", "bool", True),
+        Field("output_color", "Speaker colour", "color", BLUE),
+        Field("show_input", "Show the microphone", "bool", True),
+        Field("input_color", "Microphone colour", "color", ORANGE),
+        Field("live", "Show how loud it is right now", "bool", True,
+              help="Draws the live loudness over the volume bar. On Linux this measures the microphone, so it "
+                   "only runs while this screen is showing."),
+        Field("muted_color", "Colour when muted", "color", "#5F5E5A"),
+    ]
+
+    #: which live levels this face needs measuring, so the app can leave the microphone alone otherwise
+    def live_targets(self, opts) -> set:
+        v = self.values(opts)
+        if not v["live"]:
+            return set()
+        return ({OUTPUT} if v["show_output"] else set()) | ({INPUT} if v["show_input"] else set())
+
+    def needs_seconds(self, opts):
+        v = self.values(opts)
+        return uses_seconds(v["top_text"]) or uses_seconds(v["bottom_text"])
+
+    def paint(self, p, rect, opts, ctx, output=""):
+        v = self.values(opts)
+        p.fillRect(rect, QColor(v["bg"]))
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.TextAntialiasing)
+        inner = rect.adjusted(MARGIN, MARGIN, -MARGIN, -MARGIN)
+        audio = getattr(ctx, "audio", None)
+        tf = make_font(ctx, v["text_size"])
+        top, bottom = expand(v["top_text"], ctx, output), expand(v["bottom_text"], ctx, output)
+        area = QRectF(inner)
+        if top:
+            th = text_height(tf, top.count("\n") + 1) + 4
+            draw_text(p, QRectF(inner.left(), area.top(), inner.width(), th), top,
+                      fit_font(ctx, top, v["text_size"], inner.width()), v["text_color"], wrap=False)
+            area.setTop(area.top() + th)
+        if bottom:
+            bh = text_height(tf, bottom.count("\n") + 1) + 4
+            draw_text(p, QRectF(inner.left(), area.bottom() - bh, inner.width(), bh), bottom,
+                      fit_font(ctx, bottom, v["text_size"], inner.width()), v["text_color"], wrap=False)
+            area.setBottom(area.bottom() - bh)
+        if audio is None or not audio.available:
+            draw_text(p, area, "Sound state\nnot available", make_font(ctx, 24), GREY)
+            return
+        blocks = ([(OUTPUT, "SPEAKERS", v["output_color"])] if v["show_output"] else []) + \
+                 ([(INPUT, "MICROPHONE", v["input_color"])] if v["show_input"] else [])
+        if not blocks:
+            return
+        title_font = make_font(ctx, min(20.0, area.width() * 0.095), True)
+        name_px = min(24.0, area.width() * 0.115)
+        bar_h = max(14.0, min(24.0, area.height() * 0.09))
+        block_h = text_height(title_font) + 2 + text_height(make_font(ctx, name_px)) + 6 + bar_h
+        gap = max(10.0, (area.height() - block_h * len(blocks)) / max(1, len(blocks)))
+        y = area.top()
+        for target, title, color in blocks:
+            self._block(p, QRectF(area.left(), y, area.width(), block_h), audio.side(target), title, color,
+                        v, ctx, title_font, name_px, bar_h)
+            y += block_h + gap
+
+    def _block(self, p, box, side, title, color, v, ctx, title_font, name_px, bar_h):
+        muted = bool(side.muted)
+        shown = v["muted_color"] if muted else color
+        th = text_height(title_font)
+        # top row: who this is on the left, and either MUTED or the volume on the right
+        right = "MUTED" if muted else ("%d" % side.volume if side.volume is not None else "")
+        right_color = ORANGE if muted else v["text_color"]
+        right_w = QFontMetricsF(title_font).horizontalAdvance(right) + 8 if right else 0
+        if right:
+            draw_text(p, QRectF(box.right() - right_w, box.top(), right_w, th), right, title_font,
+                      right_color, Qt.AlignRight, wrap=False)
+        draw_text(p, QRectF(box.left(), box.top(), box.width() - right_w, th),
+                  self._fit(title, title_font, box.width() - right_w), title_font, shown, Qt.AlignLeft, wrap=False)
+        name = side.name or "(unknown)"
+        nf = fit_font(ctx, name, name_px, box.width(), False, 11)
+        nh = text_height(nf)
+        draw_text(p, QRectF(box.left(), box.top() + th + 2, box.width(), nh),
+                  self._fit(name, nf, box.width()), nf, v["muted_color"] if muted else v["text_color"],
+                  Qt.AlignLeft, wrap=False)
+        bar = QRectF(box.left(), box.bottom() - bar_h, box.width(), bar_h)
+        meters.paint_bar(p, bar, (side.volume or 0) / 100.0, shown, "#2C2C2A", radius=bar_h / 2)
+        if v["live"] and not muted and side.level > 0.02:
+            over = QRectF(bar.left() + 2, bar.top() + bar_h * 0.3, bar.width() - 4, bar_h * 0.4)
+            meters.paint_bar(p, over, side.level, LIGHT, None, radius=bar_h * 0.2)
+
+    @staticmethod
+    def _fit(text: str, font, width: float) -> str:
+        """Cut a long device name off with an ellipsis rather than letting it run over."""
+        fm = QFontMetricsF(font)
+        if fm.horizontalAdvance(text) <= width:
+            return text
+        while text and fm.horizontalAdvance(text + "…") > width:
+            text = text[:-1]
+        return text + "…"
+
+
 class BlankFace(Face):
     id = "blank"
     label = "Plain colour"
@@ -327,5 +439,5 @@ class BlankFace(Face):
 
 
 def make_faces(icons) -> dict[str, Face]:
-    faces = [AnalogClock(), DigitalClock(), TextFace(), ImageFace(icons), BlankFace()]
+    faces = [AnalogClock(), DigitalClock(), TextFace(), AudioFace(), ImageFace(icons), BlankFace()]
     return {f.id: f for f in faces}

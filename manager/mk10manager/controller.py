@@ -13,14 +13,17 @@ from .actions import ActionRunner, run_command_output
 from .config import Config
 from .device.layout import DeviceLayout
 from .device.manager import DeviceManager
+from .render import meters
 from .render.canvas import Renderer
 from .render.template import RenderContext, expand
 from .system.activewin import ActiveAppWatcher
+from .system.audio import AudioMonitor
 
 NOT_UNDOABLE = ("variables", "seen_apps")
 # Device and app settings are changed live on the Device tab; undo should never roll them back.
 NOT_UNDOABLE_SETTINGS = ("brightness", "port", "press_feedback", "time_24h", "font_family", "start_minimized",
-                         "tray_hint_shown")
+                         "tray_hint_shown", "audio_levels", "meter_fps")
+SLOW_TICK_MS = 200          # how often we look at the clock and the message timer when nothing is animating
 _NO_RESULT = object()
 
 
@@ -74,13 +77,15 @@ class Controller(QObject):
     _output_ready = Signal(str, str)
 
     def __init__(self, config: Config, device: DeviceManager | None = None, watcher: ActiveAppWatcher | None = None,
-                 renderer: Renderer | None = None, parent=None):
+                 renderer: Renderer | None = None, audio: AudioMonitor | None = None, parent=None):
         super().__init__(parent)
         self.config = config
         self.renderer = renderer or Renderer()
         self.device = device or DeviceManager(config.settings.get("port", "auto"))
         self.watcher = watcher or ActiveAppWatcher()
-        self.runner = ActionRunner()
+        self.audio = audio or AudioMonitor()
+        self.audio.set_levels_enabled(bool(config.settings.get("audio_levels", True)))
+        self.runner = ActionRunner(self.audio)
         self.layout = DeviceLayout.default()
         self.page_id = config.default_page()["id"]
         self.prev_page_id = None
@@ -93,6 +98,8 @@ class Controller(QObject):
         self.last_image: QImage | None = None
         self._last_second = None
         self._last_minute = None
+        self._last_audio_switches = None
+        self._live_targets: frozenset = frozenset()
         self._dirty = True
         self._force_push = True
         self._last_rule_result = _NO_RESULT
@@ -105,7 +112,7 @@ class Controller(QObject):
         self._save_timer.setInterval(600)
         self._save_timer.timeout.connect(self._save_now)
         self._tick = QTimer(self)
-        self._tick.setInterval(200)
+        self._tick.setInterval(SLOW_TICK_MS)
         self._tick.timeout.connect(self._on_tick)
 
         self.device.connected.connect(self._on_connected)
@@ -114,6 +121,7 @@ class Controller(QObject):
         self.device.status_changed.connect(self._on_device_status)
         self.device.device_error.connect(lambda e: self.notify.emit("MK10 says: %s" % e))
         self.watcher.changed.connect(self._on_app)
+        self.audio.changed.connect(self._on_audio)
         self.runner.ui_action.connect(self._on_ui_action)
         self.runner.failed.connect(self.notify.emit)
         self._output_ready.connect(self._on_output)
@@ -122,12 +130,15 @@ class Controller(QObject):
     def start(self):
         self.device.start()
         self.watcher.start()
+        self.audio.start()
+        self._update_live_meters()
         self._tick.start()
         self.refresh(force=True)
 
     def shutdown(self):
         self._tick.stop()
         self.watcher.stop()
+        self.audio.stop()
         self.device.stop()
         if self._save_timer.isActive():
             self._save_timer.stop()
@@ -150,7 +161,8 @@ class Controller(QObject):
         s = self.config.settings
         return RenderContext(now=datetime.now(), time_24h=bool(s.get("time_24h", True)), app=self.app,
                              title=self.title, page=self.page["name"], variables=dict(self.config.variables),
-                             outputs=self.outputs, font_family=s.get("font_family") or "")
+                             outputs=self.outputs, font_family=s.get("font_family") or "",
+                             audio=self.audio.state)
 
     # ---------------------------------------------------------------- drawing
     def refresh(self, force: bool = False):
@@ -176,6 +188,7 @@ class Controller(QObject):
             self._last_minute = now.minute
             if any(r.get("when") == "time" for r in self.config.rules):
                 self._evaluate_rules()
+        self._update_live_meters()
         self._run_face_command()
         if self._dirty or now.second != self._last_second:
             self._last_second = now.second
@@ -204,6 +217,44 @@ class Controller(QObject):
 
     def rerun_face_command(self):
         self._cmd_next.clear()
+
+    # ---------------------------------------------------------------- live meters
+    def page_live_targets(self) -> frozenset:
+        """Which sound levels this page actually shows. Nothing else gets measured."""
+        if not self.config.settings.get("audio_levels", True):
+            return frozenset()
+        wanted = set()
+        for key in self.page.get("keys") or []:
+            if key:
+                target = meters.live_target(key.get("meter"))
+                if target:
+                    wanted.add(target)
+        screen = self.page.get("screen") or {}
+        wanted |= self.renderer.face(screen.get("face")).live_targets(screen.get("options") or {})
+        return frozenset(wanted)
+
+    def _update_live_meters(self):
+        """Tell the audio monitor what to measure, and tick fast enough to animate it."""
+        targets = self.page_live_targets()
+        if targets == self._live_targets:
+            return
+        self._live_targets = targets
+        self.audio.want_levels(targets)
+        if targets:
+            fps = max(1, min(20, int(self.config.settings.get("meter_fps", 6) or 6)))
+            interval = max(50, int(round(1000 / fps)))
+        else:
+            interval = SLOW_TICK_MS
+        if self._tick.interval() != interval:
+            self._tick.setInterval(interval)
+
+    def _on_audio(self):
+        self._dirty = True
+        switches = (self.audio.state.output.muted, self.audio.state.input.muted,
+                    self.audio.state.output.volume, self.audio.state.input.volume)
+        if switches != self._last_audio_switches:      # levels move constantly; mute and volume don't
+            self._last_audio_switches = switches
+            self._evaluate_rules()
 
     # ---------------------------------------------------------------- device events
     def _on_connected(self, layout: DeviceLayout):
@@ -254,6 +305,7 @@ class Controller(QObject):
         self.page_id = page_id
         self.pressed.clear()
         self.page_changed.emit(page_id)
+        self._update_live_meters()
         self.refresh(force=True)
 
     def step_page(self, delta: int):
@@ -345,7 +397,8 @@ class Controller(QObject):
         self._evaluate_rules()
 
     def _evaluate_rules(self):
-        target = rules_mod.evaluate(self.config.rules, self.app, self.title, self.config.variables)
+        target = rules_mod.evaluate(self.config.rules, self.app, self.title, self.config.variables,
+                                    audio=self.audio.state)
         if target is None and self.config.settings.get("fallback_to_default", True) and self.config.rules:
             target = self.config.default_page()["id"]
         if target == self._last_rule_result:
@@ -363,6 +416,7 @@ class Controller(QObject):
     def edited(self, undoable: bool = True):
         """The editor changed config.data in place."""
         self._dirty = True
+        self._update_live_meters()
         self.refresh()
         self.save_later()
         self._pending_undo = self._pending_undo or undoable
@@ -425,4 +479,11 @@ class Controller(QObject):
         s = self.config.settings
         self.device.set_port(s.get("port", "auto"))
         self.set_brightness(s.get("brightness", 80), persist=False)
+        self.apply_audio_settings()
         self.edited(undoable=False)
+
+    def apply_audio_settings(self):
+        """Called when the live-meter switch or the meter speed changes on the Device tab."""
+        self.audio.set_levels_enabled(bool(self.config.settings.get("audio_levels", True)))
+        self._live_targets = None       # force _update_live_meters to re-apply the rate as well
+        self._update_live_meters()

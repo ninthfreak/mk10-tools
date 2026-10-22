@@ -3,13 +3,15 @@
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFontComboBox, QFormLayout, QFrame,
-                               QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QScrollArea, QSlider,
-                               QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
+                               QHBoxLayout, QHeaderView, QLabel, QPushButton, QScrollArea, QSlider,
+                               QSpinBox, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
 
 from .. import rules as rules_mod
 from ..config import config_dir
 from ..device.manager import all_ports
+from ..system import audio as audio_mod
 from ..system import autostart, inputs
+from .condition_row import ConditionRow
 
 
 def _muted(text: str) -> QLabel:
@@ -29,41 +31,9 @@ class RuleRow(QFrame):
         self.rule = rule
         lay = QHBoxLayout(self)
         lay.setContentsMargins(4, 2, 4, 2)
-        self.enabled = QCheckBox()
-        self.enabled.setToolTip("Turn this rule on or off")
-        self.enabled.setChecked(rule.get("enabled", True))
-        lay.addWidget(self.enabled)
-        lay.addWidget(QLabel("When"))
-        self.cond = QComboBox()
-        for v, l in rules_mod.CONDITIONS:
-            self.cond.addItem(l, v)
-        self.cond.setCurrentIndex(max(0, self.cond.findData(rule.get("when", "app"))))
-        lay.addWidget(self.cond)
-
-        self.app = QComboBox()
-        self.app.setEditable(True)
-        self.app.addItems(apps)
-        self.app.setCurrentText(rule.get("value", "") if rule.get("when") == "app" else "")
-        self.app.lineEdit().setPlaceholderText("firefox, code")
-        self.app.setMinimumWidth(150)
-        self.title = QLineEdit(rule.get("value", "") if rule.get("when") == "title" else "")
-        self.title.setPlaceholderText("Zoom Meeting")
-        self.var = QComboBox()
-        self.var.setEditable(True)
-        self.var.addItems(variables)
-        self.var.setCurrentText(rule.get("name", "mode"))
-        self.var.setMinimumWidth(110)
-        self.var_is = QLabel("is")
-        self.var_value = QLineEdit(rule.get("value", "") if rule.get("when") == "variable" else "")
-        self.var_value.setPlaceholderText("meeting")
-        self.t_from = QLineEdit(rule.get("from", "09:00"))
-        self.t_and = QLabel("and")
-        self.t_to = QLineEdit(rule.get("to", "17:00"))
-        for t in (self.t_from, self.t_to):
-            t.setInputMask("99:99")
-            t.setFixedWidth(64)
-        for w in (self.app, self.title, self.var, self.var_is, self.var_value, self.t_from, self.t_and, self.t_to):
-            lay.addWidget(w)
+        self.cond = ConditionRow(rule, {"apps": lambda: apps, "variables": lambda: variables})
+        self.cond.changed.connect(self.changed.emit)
+        lay.addWidget(self.cond, 1)
         lay.addWidget(QLabel("show page"))
         self.page = QComboBox()
         self.page.addItem("(choose)", None)
@@ -71,7 +41,6 @@ class RuleRow(QFrame):
             self.page.addItem(name, pid)
         self.page.setCurrentIndex(max(0, self.page.findData(rule.get("page"))))
         lay.addWidget(self.page)
-        lay.addStretch(1)
         for text, tip, fn in (("↑", "Move up (rules higher up win)", lambda: self.move.emit(self, -1)),
                               ("↓", "Move down", lambda: self.move.emit(self, 1)),
                               ("✕", "Delete this rule", lambda: self.remove.emit(self))):
@@ -81,33 +50,11 @@ class RuleRow(QFrame):
             b.setAutoRaise(True)
             b.clicked.connect(fn)
             lay.addWidget(b)
-        self._show()
-        self.enabled.toggled.connect(lambda on: self._set("enabled", bool(on)))
-        self.cond.currentIndexChanged.connect(self._cond_changed)
-        self.app.currentTextChanged.connect(lambda t: self._set("value", t.strip()))
-        self.title.textChanged.connect(lambda t: self._set("value", t))
-        self.var.currentTextChanged.connect(lambda t: self._set("name", t.strip()))
-        self.var_value.textChanged.connect(lambda t: self._set("value", t))
-        self.t_from.textChanged.connect(lambda t: self._set("from", t))
-        self.t_to.textChanged.connect(lambda t: self._set("to", t))
         self.page.currentIndexChanged.connect(lambda i: self._set("page", self.page.itemData(i)))
 
-    def _show(self):
-        w = self.rule.get("when", "app")
-        self.app.setVisible(w == "app")
-        self.title.setVisible(w == "title")
-        for x in (self.var, self.var_is, self.var_value):
-            x.setVisible(w == "variable")
-        for x in (self.t_from, self.t_and, self.t_to):
-            x.setVisible(w == "time")
-
-    def _cond_changed(self, i):
-        self.rule["when"] = self.cond.itemData(i)
-        w = self.rule["when"]
-        self.rule["value"] = {"app": self.app.currentText().strip(), "title": self.title.text(),
-                              "variable": self.var_value.text()}.get(w, "")
-        self._show()
-        self.changed.emit()
+    @property
+    def enabled(self):
+        return self.cond.enabled
 
     def _set(self, key, value):
         if self.rule.get(key) != value:
@@ -356,6 +303,21 @@ class DevicePanel(QWidget):
         frow.addWidget(self.custom_font)
         frow.addWidget(self.font, 1)
         left.addRow("Text on the device", self._wrap(frow))
+        arow = QHBoxLayout()
+        self.levels = QCheckBox("Live level meters")
+        self.levels.setToolTip("Measure how loud the speakers and microphone are, for meters behind keys and on "
+                               "the small screen. Only runs while a page actually shows one.")
+        self.levels.setChecked(bool(s.get("audio_levels", True)))
+        self.meter_fps = QSpinBox()
+        self.meter_fps.setRange(1, 20)
+        self.meter_fps.setValue(int(s.get("meter_fps", 6)))
+        self.meter_fps.setToolTip("How many times a second the whole picture is redrawn and sent to the MK10 "
+                                  "while a live meter is on screen. Lower if the display looks busy.")
+        arow.addWidget(self.levels)
+        arow.addWidget(QLabel("Updates a second"))
+        arow.addWidget(self.meter_fps)
+        arow.addStretch(1)
+        left.addRow("Sound meters", self._wrap(arow))
 
         self.minimized = QCheckBox("Start hidden (in the tray)")
         self.minimized.setChecked(bool(s.get("start_minimized")))
@@ -365,6 +327,8 @@ class DevicePanel(QWidget):
         right.addWidget(self.login)
         right.addSpacing(8)
         right.addWidget(_muted("Keystrokes are sent with: %s" % inputs.describe_backend()))
+        right.addWidget(_muted("Sound is read and changed with: %s"
+                               % audio_mod.describe_backend(getattr(ctl.audio, "backend", None))))
         w = ctl.watcher
         detect = "Active app detection: %s" % (getattr(w, "method", "?"))
         if getattr(w, "note", ""):
@@ -390,6 +354,8 @@ class DevicePanel(QWidget):
         self.custom_font.toggled.connect(self._font_toggle)
         self.font.currentFontChanged.connect(lambda f: self.custom_font.isChecked() and
                                              self._set("font_family", f.family()))
+        self.levels.toggled.connect(lambda on: self._audio_setting("audio_levels", bool(on)))
+        self.meter_fps.valueChanged.connect(lambda v: self._audio_setting("meter_fps", int(v)))
         self.minimized.toggled.connect(lambda on: self._set("start_minimized", bool(on)))
         self.login.toggled.connect(self._login)
         ctl.connection_changed.connect(lambda ok, text: self.status.setText(text))
@@ -426,6 +392,11 @@ class DevicePanel(QWidget):
         self.ctl.config.settings[key] = value
         self.changed.emit()
 
+    def _audio_setting(self, key, value):
+        self.ctl.config.settings[key] = value
+        self.ctl.apply_audio_settings()
+        self.changed.emit()
+
     def _font_toggle(self, on):
         self.font.setEnabled(on)
         self._set("font_family", self.font.currentFont().family() if on else "")
@@ -438,6 +409,7 @@ class DevicePanel(QWidget):
     def reload(self):
         s = self.ctl.config.settings
         for w, v in ((self.feedback, s.get("press_feedback", True)), (self.h24, s.get("time_24h", True)),
+                     (self.levels, s.get("audio_levels", True)),
                      (self.minimized, s.get("start_minimized", False))):
             w.blockSignals(True)
             w.setChecked(bool(v))
@@ -446,3 +418,6 @@ class DevicePanel(QWidget):
         self.brightness.setValue(int(s.get("brightness", 80)))
         self.b_label.setText("%d%%" % self.brightness.value())
         self.brightness.blockSignals(False)
+        self.meter_fps.blockSignals(True)
+        self.meter_fps.setValue(int(s.get("meter_fps", 6)))
+        self.meter_fps.blockSignals(False)

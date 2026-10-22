@@ -3,7 +3,9 @@
 from PySide6.QtCore import QBuffer, QIODevice, QRectF, Qt
 from PySide6.QtGui import QColor, QFontMetricsF, QImage, QPainter, QPainterPath, QPen
 
+from ..conditions import resolve_key
 from ..device.layout import DeviceLayout
+from . import meters
 from .faces import draw_text, fit_font, make_faces, make_font
 from .icons import IconLibrary
 from .template import RenderContext, expand
@@ -24,6 +26,8 @@ class Renderer:
         if not key:
             p.fillRect(rect, EMPTY_KEY)
             return
+        meter = key.get("meter")
+        key = resolve_key(key, ctx)       # a state may change the label, colours or icon
         if pressed:
             # Draw normally into a buffer, then shrink it a little: reads as a press, like OpenDeck.
             buf = QImage(int(rect.width()), int(rect.height()), QImage.Format_RGB32)
@@ -36,6 +40,10 @@ class Renderer:
             p.drawImage(rect.adjusted(m, m, -m, -m), buf)
             return
         p.fillRect(rect, QColor(key.get("bg") or "#000000"))
+        if meters.active(meter):
+            value = meters.meter_value(meter, ctx)
+            if value is not None:
+                meters.paint_meter(p, rect, meter, value)
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.TextAntialiasing)
         p.setRenderHint(QPainter.SmoothPixmapTransform)

@@ -169,6 +169,61 @@ class FileEdit(QWidget):
             self.line.setText(path)
 
 
+class IconEdit(QWidget):
+    """Pick one of the built-in icons. Stores the icon's name."""
+
+    textChanged = Signal(str)
+
+    def __init__(self, name="", icons=None, color="#FFFFFF", parent=None):
+        super().__init__(parent)
+        self.icons = icons
+        self.color = color
+        self._name = name or ""
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self.preview = QLabel()
+        self.preview.setFixedSize(32, 32)
+        self.preview.setAlignment(Qt.AlignCenter)
+        self.preview.setStyleSheet("background: #2C2C2A; border-radius: 5px; color: gray;")
+        self.button = QPushButton()
+        self.button.clicked.connect(self._pick)
+        lay.addWidget(self.preview)
+        lay.addWidget(self.button, 1)
+        self._refresh()
+
+    def name(self) -> str:
+        return self._name
+
+    def set_name(self, name: str):
+        self._name = name or ""
+        self._refresh()
+
+    def set_color(self, color: str):
+        self.color = color or "#FFFFFF"
+        self._refresh()
+
+    def _refresh(self):
+        self.button.setText(self._name or "Choose an icon")
+        img = self.icons.builtin_image(self._name, 28, self.color) if (self.icons and self._name) else None
+        if img is not None and not img.isNull():
+            self.preview.setPixmap(QPixmap.fromImage(img))
+        else:
+            self.preview.clear()
+            self.preview.setText("none")
+
+    def _pick(self):
+        if self.icons is None:
+            return
+        from .icon_picker import IconPicker            # imported here: icon_picker uses this module
+        d = IconPicker(self.icons, self._name, self.color, "#2C2C2A", self.window())
+        with dialog_open():
+            ok = d.exec()
+        if ok and d.selected_name():
+            self._name = d.selected_name()
+            self._refresh()
+            self.textChanged.emit(self._name)
+
+
 class PlainEdit(QPlainTextEdit):
     def __init__(self, text="", lines=3, parent=None):
         super().__init__(parent)
@@ -196,7 +251,8 @@ def _show_help(btn, text):
 class Form(QWidget):
     """Builds a form for a list of Fields, editing `values` (a dict) in place. Emits changed() after edits.
 
-    providers: dict with optional callables 'pages' -> [(id, name)], 'apps' -> [str], 'variables' -> [str]."""
+    providers: dict with optional callables 'pages' -> [(id, name)], 'apps' -> [str], 'variables' -> [str],
+    plus 'icons' (an IconLibrary) for icon fields."""
 
     changed = Signal(str)
 
@@ -232,6 +288,12 @@ class Form(QWidget):
         self.values[key] = value
         if any(f.show_if and f.show_if[0] == key for f in self.fields):
             self._update_visibility()
+        if key == "icon_color":
+            for f in self.fields:
+                if f.kind == "icon":
+                    w = self.rows[f.key][1].layout().itemAt(0).widget()
+                    if isinstance(w, IconEdit):
+                        w.set_color(value)
         self.changed.emit(key)
 
     def _update_visibility(self):
@@ -286,6 +348,10 @@ class Form(QWidget):
             w.addItems(items)
             w.setCurrentText(str(v or ""))
             w.currentTextChanged.connect(lambda t, k=k: self._set(k, t.strip()))
+            return w
+        if f.kind == "icon":
+            w = IconEdit(v or "", self.providers.get("icons"), self.values.get("icon_color") or "#FFFFFF")
+            w.textChanged.connect(lambda t, k=k: self._set(k, t))
             return w
         if f.kind == "hotkey":
             w = HotkeyEdit(v or "")
