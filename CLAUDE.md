@@ -35,6 +35,8 @@ Read `docs/protocol.md` before touching device code, and `docs/research-notes.md
   - A firmware update has no rollback, and no recovery path is known yet.
 - Don't probe unknown JSON methods or parameters on the real device without asking. `getInfo` and `setBacklight`
   are known to be safe.
+- Never commit a Slack token, or any other credential. The Slack token belongs in the settings folder
+  (`slack-token`, owner-only), never in the repository or in `config.json`.
 - Never commit device data or vendor files: `magic.bin` (device identity), SD-card dumps, Waveshare's
   `KeyboardDevice` firmware, or the ScreenKey installer. `.gitignore` covers the obvious ones.
 - This repository is public.
@@ -60,6 +62,8 @@ editor forms through `schema.Field`. `render/meters.py` draws level meters behin
 `parec` on Linux) on its own thread; live levels are only measured while a page on screen shows one.
 `conditions.py` holds the one condition evaluator, shared by context rules (which switch pages) and key *states*
 (which repaint a key while something is true — that's what makes a mute key show the real mute state).
+`system/slack.py` is the Slack Web API client and its polling monitor; the token lives in its own 0600 file in
+the settings folder, never in `config.json`. `templates.py` builds ready-made pages for the New page window.
 `controller.py` is the hub. It owns pages, presses, rules (edge-triggered: they act only when the result changes),
 variables, debounced saving and undo snapshots (device settings are kept out of undo).
 `actions.py` runs key actions on a worker thread; actions that touch the app (page, variable, message, brightness,
@@ -67,6 +71,8 @@ open) come back through a signal. The `audio` action goes straight to the audio 
 `ui/` holds the window. Editors edit the config dicts in place and call `controller.edited()`.
 Wrap any dialog in `widgets.dialog_open()` so a page switch can't reload the editor underneath it.
 `ui/condition_row.py` is the one condition editor widget, used by both context rules and key states.
+`ui/new_page.py` is the New page window: it renders each template with the real renderer so the preview is
+exactly what the device would show.
 
 ## Commits
 

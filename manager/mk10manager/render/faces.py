@@ -47,6 +47,15 @@ def draw_text(p: QPainter, rect: QRectF, text: str, font: QFont, color: str,
     p.drawText(rect, text, opt)
 
 
+def _duration(minutes: int) -> str:
+    """26 -> '26 min', 90 -> '1h 30m', 1500 -> '25h'. Keeps a long snooze from printing a silly number."""
+    minutes = max(0, int(minutes))
+    if minutes < 60:
+        return "%d min" % minutes
+    hours, rest = divmod(minutes, 60)
+    return "%dh %dm" % (hours, rest) if rest else "%dh" % hours
+
+
 def text_height(font: QFont, lines: int = 1) -> float:
     return QFontMetricsF(font).lineSpacing() * lines
 
@@ -429,6 +438,141 @@ class AudioFace(Face):
         return text + "…"
 
 
+class SlackFace(Face):
+    """Slack, plus the bits of the sound card that matter while you're in a huddle."""
+
+    id = "slack"
+    label = "Slack"
+    options = [
+        Field("bg", "Background", "color", "#000000"),
+        Field("top_text", "Text at the top", "template", "{time}", help=COMMON_TEXT_HELP),
+        Field("bottom_text", "Text at the bottom", "template", "", help=COMMON_TEXT_HELP),
+        Field("text_color", "Text colour", "color", LIGHT),
+        Field("text_size", "Text size", "int", 28, minimum=10, maximum=60),
+        Field("accent", "Highlight colour", "color", BLUE),
+        Field("busy_color", "Colour when busy", "color", ORANGE),
+        Field("show_status", "Show my Slack status", "bool", True),
+        Field("show_unread", "Show unread messages", "bool", True),
+        Field("show_mic", "Show the microphone", "bool", True,
+              help="The real microphone, from the sound card — not Slack's. That's the one a mute key changes."),
+        Field("live", "Show how loud the microphone is", "bool", True, show_if=("show_mic", (True,))),
+    ]
+
+    def live_targets(self, opts) -> set:
+        v = self.values(opts)
+        return {INPUT} if (v["show_mic"] and v["live"]) else set()
+
+    def needs_seconds(self, opts):
+        v = self.values(opts)
+        return uses_seconds(v["top_text"]) or uses_seconds(v["bottom_text"])
+
+    def paint(self, p, rect, opts, ctx, output=""):
+        v = self.values(opts)
+        p.fillRect(rect, QColor(v["bg"]))
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.TextAntialiasing)
+        inner = rect.adjusted(MARGIN, MARGIN, -MARGIN, -MARGIN)
+        area = QRectF(inner)
+        tf = make_font(ctx, v["text_size"])
+        for text, at_top in ((expand(v["top_text"], ctx, output), True),
+                             (expand(v["bottom_text"], ctx, output), False)):
+            if not text:
+                continue
+            h = text_height(tf, text.count("\n") + 1) + 4
+            y = area.top() if at_top else area.bottom() - h
+            draw_text(p, QRectF(inner.left(), y, inner.width(), h), text,
+                      fit_font(ctx, text, v["text_size"], inner.width()), v["text_color"], wrap=False)
+            if at_top:
+                area.setTop(area.top() + h)
+            else:
+                area.setBottom(area.bottom() - h)
+
+        slack = getattr(ctx, "slack", None)
+        rows = []
+        if slack is None or not slack.connected:
+            rows.append(("SLACK", slack.note[:40] if (slack and slack.note) else "not set up", GREY, False))
+        else:
+            huddle = "In a huddle" if slack.in_huddle else "No huddle"
+            rows.append(("HUDDLE", huddle, v["busy_color"] if slack.in_huddle else v["accent"],
+                         slack.in_huddle))
+            presence = "Away" if slack.away else "Active"
+            if slack.dnd:
+                left = slack.dnd_minutes_left()
+                presence += (" · snoozed %s" % _duration(left)) if left else " · snoozed"
+            rows.append(("ME", presence, v["busy_color"] if (slack.away or slack.dnd) else v["accent"],
+                         slack.dnd or slack.away))
+            status = slack.status_text or str(slack.status_emoji or "").strip(":").replace("_", " ")
+            if v["show_status"] and status:
+                rows.append(("STATUS", status, v["accent"], False))
+            if v["show_unread"]:
+                if slack.unread:
+                    text = "%d unread" % slack.unread
+                    if slack.mentions:
+                        text += " · %d for me" % slack.mentions
+                else:
+                    text = "All caught up"
+                rows.append(("MESSAGES", text, v["busy_color"] if slack.unread else v["accent"],
+                             bool(slack.unread)))
+        self._rows(p, area, rows, v, ctx)
+
+    def _rows(self, p, area, rows, v, ctx):
+        """One line per thing: a small grey label on the left, the answer on the right."""
+        audio = getattr(ctx, "audio", None)
+        mic = v["show_mic"] and audio is not None and audio.available
+        label_font = make_font(ctx, min(16.0, area.width() * 0.075), True)
+        value_px = min(26.0, area.width() * 0.12)
+        lh = text_height(label_font)
+        row_h = max(lh, text_height(make_font(ctx, value_px))) + 4
+        bar_h = max(10.0, min(20.0, area.height() * 0.075)) if mic else 0.0
+        mic_block = (lh + 3 + bar_h) if mic else 0.0
+        gap_min = 5.0
+
+        def needed(n):
+            slots = n + (1 if mic else 0)
+            return row_h * n + mic_block + gap_min * max(0, slots - 1)
+
+        while len(rows) > 2 and needed(len(rows)) > area.height():
+            rows = rows[:-1]
+        slots = len(rows) + (1 if mic else 0)
+        spare = area.height() - row_h * len(rows) - mic_block
+        gap = max(gap_min, min(18.0, spare / max(1, slots - 1))) if slots > 1 else 0.0
+
+        y = area.top()
+        for title, value, colour, strong in rows:
+            label_w = QFontMetricsF(label_font).horizontalAdvance(title) + 10
+            draw_text(p, QRectF(area.left(), y, label_w, row_h), title, label_font, GREY,
+                      Qt.AlignLeft, wrap=False)
+            room = area.width() - label_w
+            vf = fit_font(ctx, value, value_px, room, strong, 11)
+            draw_text(p, QRectF(area.left() + label_w, y, room, row_h), self._clip(value, vf, room),
+                      vf, colour, Qt.AlignRight, wrap=False)
+            y += row_h + gap
+        if not mic:
+            return
+        side = audio.side(INPUT)
+        muted = bool(side.muted)
+        draw_text(p, QRectF(area.left(), y, area.width(), lh), "MICROPHONE", label_font, GREY,
+                  Qt.AlignLeft, wrap=False)
+        if muted:
+            draw_text(p, QRectF(area.left(), y, area.width(), lh), "MUTED", label_font, v["busy_color"],
+                      Qt.AlignRight, wrap=False)
+        bar = QRectF(area.left(), y + lh + 3, area.width(), bar_h)
+        colour = GREY if muted else v["accent"]
+        meters.paint_bar(p, bar, (side.volume or 0) / 100.0, colour, "#2C2C2A", radius=bar_h / 2)
+        if v["live"] and not muted and side.level > 0.02:
+            over = QRectF(bar.left() + 2, bar.top() + bar_h * 0.3, bar.width() - 4, bar_h * 0.4)
+            meters.paint_bar(p, over, side.level, LIGHT, None, radius=bar_h * 0.2)
+
+    @staticmethod
+    def _clip(text: str, font, width: float) -> str:
+        fm = QFontMetricsF(font)
+        if fm.horizontalAdvance(text) <= width:
+            return text
+        while text and fm.horizontalAdvance(text + "…") > width:
+            text = text[:-1]
+        return text + "…"
+
+
 class BlankFace(Face):
     id = "blank"
     label = "Plain colour"
@@ -439,5 +583,6 @@ class BlankFace(Face):
 
 
 def make_faces(icons) -> dict[str, Face]:
-    faces = [AnalogClock(), DigitalClock(), TextFace(), AudioFace(), ImageFace(icons), BlankFace()]
+    faces = [AnalogClock(), DigitalClock(), TextFace(), AudioFace(), SlackFace(), ImageFace(icons),
+             BlankFace()]
     return {f.id: f for f in faces}

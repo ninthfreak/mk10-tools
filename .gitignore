@@ -22,3 +22,6 @@ KeyboardDevice
 DeviceUpgradeFirmware
 ScreenKey*.exe
 sdcard/
+
+# Slack token, if a settings folder ever ends up inside the repo
+slack-token

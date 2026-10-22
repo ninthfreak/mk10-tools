@@ -44,6 +44,69 @@ Considered and set aside:
 - **Running our own code on the MK10.** The only route found is replacing `/data/KeyboardDevice` with a launcher.
   That risks bricking the device until a recovery path is confirmed (FEL button or pads, or a UART header).
 
+## Microsoft Teams: what a desk device can and can't get (investigated October 2026, nothing built)
+
+Asked for: which input/output devices Teams is using, the time, how long the meeting has been going,
+how many people are in it, and who is speaking.
+
+### The route that would have worked is closed
+
+Teams used to run a local WebSocket on `ws://127.0.0.1:8124`, paired with a token from Teams' own settings.
+It gave mute, camera, hand-raised, recording and blur state, and took commands back. That's what the Elgato
+Teams plugin, MuteMe and Dell's collaboration keyboards used.
+**Microsoft retired it on 30 June 2026** (message centre MC1266901) with no replacement for hardware, and
+current clients don't accept connections. Don't build on it.
+
+It never offered participant count, who is speaking, or which audio devices Teams had selected.
+
+### What's left
+
+| Route | Gives | Costs | Works on |
+|---|---|---|---|
+| UI Automation scraping (what MuteDeck does now) | mute, camera, in-a-call; roster count with effort | breaks on Teams UI changes, language-dependent | Windows |
+| `teams-for-linux` (Electron wrapper) MQTT / D-Bus | a status object (mic, camera), plus toggle-mute / toggle-video / raise-hand commands | you run their wrapper instead of the PWA; their own issue tracker shows mute detection breaking against current Teams | Linux |
+| Graph `/me/presence` | availability and activity (`InAMeeting`, `InACall`, `Presenting`) | Entra app registration; delegated `Presence.Read`, or `Presence.Read.All` for change notifications (1-hour subscriptions, renewed by PATCH); no personal accounts; a work tenant will probably want admin consent | anywhere |
+| Graph Communications calling bot | the only supported live roster **and** active speaker | an Azure-hosted bot with application permissions and admin consent, which **joins the meeting as a visible participant** | anywhere, but socially unacceptable at a desk |
+| Local side channels, no Teams cooperation needed | "the microphone is open, so I'm in a call", and a timer from when it opened | nothing | both |
+
+Local side channels are worth more than they look:
+
+- **Microphone in use.** Windows: enumerate Core Audio sessions, or read
+  `HKCU\...\CapabilityAccessManager\ConsentStore\microphone\NonPackaged\<app>` where `LastUsedTimeStop == 0`
+  means in use right now. Linux: `pactl list source-outputs` says which app holds a capture stream.
+  Language-independent and survives Teams updates. Worth having as a "something is listening right now"
+  indicator and as a cross-app trigger (it fires for Zoom, Meet and Discord too), **not** as a clock: elapsed
+  call time isn't the number anyone wants.
+- **Window title** (we already watch it) sometimes carries the meeting subject.
+- **Calendar.** The only source of what the meeting is *scheduled* for — subject, start, end, organiser, the
+  invited attendee list, and whether it's an online meeting. Nothing in Teams is needed, and nothing here is
+  being retired. Three ways in:
+  - **Classic Outlook COM** on Windows (`Outlook.Application`, MAPI). No app registration, no OAuth, no admin
+    consent — which matters a lot on a locked-down work PC. Dead end if the machine has "new Outlook", which
+    has no COM.
+  - **Graph `/me/calendarView`**, delegated `Calendars.Read`. Works on both platforms. Needs an Entra app
+    registration; `Calendars.Read` is a common user-consentable scope, so less likely to need admin consent
+    than `Presence.Read.All`, but a tenant can still block it.
+  - **A published `.ics` URL** the manager polls. Trivial to consume, but many tenants disable calendar
+    publishing.
+- Teams' own `Ctrl+Shift+M` only works while Teams has focus, so sending keystrokes is not a global mute.
+
+### Verdict per ask
+
+- **Which devices Teams is using:** not exposed anywhere. The OS default devices (which the manager now shows)
+  are what Teams uses unless someone overrode it inside Teams, and that override lives in Teams' own opaque
+  settings store.
+- **Time:** done.
+- **Meeting length:** what's wanted is the *scheduled* time — "on until 10:15, 4 minutes left" — so this is a
+  calendar job, not a Teams one. Classic Outlook COM on the work PC, Graph `calendarView` otherwise.
+  Difficulty 2/5 via COM, 3/5 via Graph (the consent policy is the risk, not the code).
+- **Number of people:** the *invited* count comes free with the calendar entry, which may be close enough to
+  show. Who is actually in the room needs UI scraping (Windows-only, fragile) or a meeting bot.
+  Difficulty 4/5 for the real thing. Not worth it.
+- **Who is speaking:** a meeting bot only. Difficulty 5/5. Drop it.
+- **Mute:** the OS microphone mute (shipped) is what hardware mute buttons do now that the Teams API is gone.
+  Whether Teams shows "muted by your system" in current builds is untested on real hardware.
+
 ## Status (October 2026)
 
 | Tool | State |

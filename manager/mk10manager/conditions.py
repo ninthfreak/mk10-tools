@@ -12,6 +12,7 @@ from datetime import datetime
 
 from .schema import Field
 from .system.audio import INPUT, OUTPUT, AudioState
+from .system.slack import SlackState
 
 CONDITIONS = [
     ("app", "App is"),
@@ -20,18 +21,33 @@ CONDITIONS = [
     ("time", "Time is between"),
     ("output_muted", "Speakers are"),
     ("input_muted", "Microphone is"),
+    ("slack_huddle", "Slack huddle"),
+    ("slack_dnd", "Slack notifications"),
+    ("slack_presence", "Slack shows me as"),
+    ("slack_unread", "Slack unread"),
 ]
 
 AUDIO_CONDITIONS = ("output_muted", "input_muted")
+SLACK_CONDITIONS = ("slack_huddle", "slack_dnd", "slack_presence", "slack_unread")
 MUTE_CHOICES = [("yes", "muted"), ("no", "not muted")]
+
+#: Conditions whose value is picked from a short list. The editor builds one combo box from this.
+CHOICE_CONDITIONS = {
+    "output_muted": MUTE_CHOICES,
+    "input_muted": MUTE_CHOICES,
+    "slack_huddle": [("yes", "I'm in one"), ("no", "I'm not in one")],
+    "slack_dnd": [("yes", "snoozed"), ("no", "not snoozed")],
+    "slack_presence": [("away", "away"), ("active", "active")],
+    "slack_unread": [("yes", "something unread"), ("no", "all caught up")],
+}
 CONDITION_DEFAULTS = {"when": "app", "value": "", "name": "mode", "from": "09:00", "to": "17:00"}
 
 
 def new_condition(when: str = "app") -> dict:
     c = dict(CONDITION_DEFAULTS)
     c["when"] = when
-    if when in AUDIO_CONDITIONS:
-        c["value"] = "yes"
+    if when in CHOICE_CONDITIONS:
+        c["value"] = CHOICE_CONDITIONS[when][0][0]
     return c
 
 
@@ -60,7 +76,8 @@ def wants_muted(value) -> bool:
 
 
 def matches(cond: dict, app: str = "", title: str = "", variables: dict | None = None,
-            now: datetime | None = None, audio: AudioState | None = None) -> bool:
+            now: datetime | None = None, audio: AudioState | None = None,
+            slack: SlackState | None = None) -> bool:
     """Is this condition true right now? Unknown kinds, and sound we can't read, are never true."""
     if not cond.get("enabled", True):
         return False
@@ -86,12 +103,21 @@ def matches(cond: dict, app: str = "", title: str = "", variables: dict | None =
             return False
         muted = audio.side(INPUT if when == "input_muted" else OUTPUT).muted
         return muted is not None and muted == wants_muted(cond.get("value"))
+    if when in SLACK_CONDITIONS:
+        if slack is None or not slack.connected:
+            return False
+        if when == "slack_presence":
+            return slack.presence == ("away" if value.lower() == "away" else "active")
+        now_true = {"slack_huddle": slack.in_huddle, "slack_dnd": slack.dnd,
+                    "slack_unread": slack.unread > 0}[when]
+        return now_true == wants_muted(cond.get("value"))      # "yes"/"no", same reading as the mute ones
     return False
 
 
 def matches_in(cond: dict, ctx) -> bool:
     """Same, for anything that carries a RenderContext (keys while they're being drawn)."""
-    return matches(cond, ctx.app, ctx.title, ctx.variables, ctx.now, getattr(ctx, "audio", None))
+    return matches(cond, ctx.app, ctx.title, ctx.variables, ctx.now, getattr(ctx, "audio", None),
+                   getattr(ctx, "slack", None))
 
 
 def describe(cond: dict) -> str:
@@ -108,6 +134,11 @@ def describe(cond: dict) -> str:
         what = "the microphone" if when == "input_muted" else "the speakers"
         return "%s %s %s" % (what, "is" if when == "input_muted" else "are",
                              dict(MUTE_CHOICES).get(cond.get("value") or "yes", "muted"))
+    if when in SLACK_CONDITIONS:
+        words = dict(CHOICE_CONDITIONS[when]).get(cond.get("value") or "yes", "?")
+        lead = {"slack_huddle": "a Slack huddle:", "slack_dnd": "Slack notifications are",
+                "slack_presence": "Slack shows me as", "slack_unread": "Slack has"}[when]
+        return "%s %s" % (lead, words)
     return "?"
 
 

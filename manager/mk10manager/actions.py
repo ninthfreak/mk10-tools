@@ -13,6 +13,7 @@ from PySide6.QtCore import QObject, Signal
 from .schema import Field, fill_defaults
 from .system import audio as audio_mod
 from .system import inputs
+from .system import slack as slack_mod
 
 ACTION_TYPES = {
     "hotkey": ("Keyboard shortcut", [
@@ -27,6 +28,24 @@ ACTION_TYPES = {
         Field("mode", "Do", "choice", "toggle_mute", audio_mod.MODES),
         Field("value", "Step or level (%)", "int", 5, minimum=0, maximum=100,
               show_if=("mode", ("volume_up", "volume_down", "set_volume"))),
+    ]),
+    "slack": ("Slack", [
+        Field("mode", "Do", "choice", "status",
+              [("status", "Set my status"), ("clear_status", "Clear my status"),
+               ("presence", "Set me active or away"), ("dnd", "Snooze notifications"),
+               ("end_dnd", "Stop snoozing"), ("post", "Post a message"), ("open", "Open Slack")]),
+        Field("status_text", "Status", "text", "In a meeting", show_if=("mode", ("status",))),
+        Field("status_emoji", "Emoji", "text", ":headphones:", show_if=("mode", ("status",)),
+              help="A Slack emoji name with colons around it, like :headphones: or :coffee:"),
+        Field("minutes", "Clear it after (minutes)", "int", 0, minimum=0, maximum=1440,
+              show_if=("mode", ("status",)), help="0 leaves it until you clear it yourself."),
+        Field("snooze_minutes", "Snooze for (minutes)", "int", 30, minimum=1, maximum=1440,
+              show_if=("mode", ("dnd",))),
+        Field("presence", "Show me as", "choice", "away", slack_mod.PRESENCE_CHOICES,
+              show_if=("mode", ("presence",))),
+        Field("channel", "Channel or person", "text", "", show_if=("mode", ("post", "open")),
+              help="A Slack ID: C… for a channel, U… for a person. Copy it from Slack's own menus."),
+        Field("message", "Message", "multiline", "", show_if=("mode", ("post",))),
     ]),
     "media": ("Media key", [
         Field("key", "Key", "choice", "play_pause", inputs.MEDIA_KEYS),
@@ -91,6 +110,19 @@ def summary(action: dict, page_name=lambda pid: pid) -> str:
         return "Type  “%s”" % (s[:30] + ("..." if len(s) > 30 else ""))
     if t == "media":
         return dict(inputs.MEDIA_KEYS).get(a["key"], a["key"])
+    if t == "slack":
+        mode = a["mode"]
+        if mode == "status":
+            return "Slack status  “%s”" % (a["status_text"] or a["status_emoji"] or "(empty)")
+        if mode == "presence":
+            return "Slack: show me as %s" % dict(slack_mod.PRESENCE_CHOICES).get(a["presence"], a["presence"])
+        if mode == "dnd":
+            return "Slack: snooze for %s min" % a["snooze_minutes"]
+        if mode == "post":
+            return "Slack: post to %s" % (a["channel"] or "(no channel)")
+        if mode == "open":
+            return "Open Slack%s" % ("  %s" % a["channel"] if a["channel"] else "")
+        return {"clear_status": "Slack: clear my status", "end_dnd": "Slack: stop snoozing"}.get(mode, label)
     if t == "audio":
         what = "the microphone" if a["target"] == audio_mod.INPUT else "the speakers"
         mode = dict(audio_mod.MODES).get(a["mode"], a["mode"])
@@ -190,9 +222,10 @@ class ActionRunner(QObject):
     ui_action = Signal(dict)
     failed = Signal(str)
 
-    def __init__(self, audio=None, parent=None):
+    def __init__(self, audio=None, slack=None, parent=None):
         super().__init__(parent)
         self.audio = audio
+        self.slack = slack
         self._q = queue.Queue()
         self._thread = threading.Thread(target=self._loop, name="actions", daemon=True)
         self._thread.start()
@@ -214,6 +247,21 @@ class ActionRunner(QObject):
                         what = str(a.get("type"))
                     self.failed.emit("%s failed: %s" % (what, e))
 
+    def _slack(self, a: dict):
+        if self.slack is None:
+            return False, "Slack isn't set up in this app."
+        mode = a.get("mode") or "status"
+        if mode == "open":
+            # Opening a link belongs to the GUI thread, like the "open" action.
+            target = slack_mod.deep_link(self.slack.state.team_id, "channel", a.get("channel") or "")
+            self.ui_action.emit({"type": "open", "target": target})
+            return True, ""
+        params = dict(text=a.get("status_text") if mode == "status" else a.get("message"),
+                      emoji=a.get("status_emoji"), presence=a.get("presence"),
+                      channel=a.get("channel"),
+                      minutes=a.get("snooze_minutes") if mode == "dnd" else a.get("minutes"))
+        return self.slack.apply(mode, params)
+
     def _one(self, a: dict):
         t = a.get("type")
         if t in UI_ACTIONS:
@@ -225,6 +273,8 @@ class ActionRunner(QObject):
             ok, msg = inputs.type_text(a.get("text", ""))
         elif t == "media":
             ok, msg = inputs.media(a.get("key", "play_pause"))
+        elif t == "slack":
+            ok, msg = self._slack(a)
         elif t == "audio":
             if self.audio is None:
                 ok, msg = False, audio_mod.NullAudio.note
