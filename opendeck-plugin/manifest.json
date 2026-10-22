@@ -1,0 +1,17 @@
+{
+  "Name": "Waveshare MK10 (unofficial)",
+  "Description": "Device support for the Waveshare MK10 macro pad (firmware V2.32 or newer). Unofficial; not affiliated with Waveshare.",
+  "Author": "opendeck-mk10 contributors",
+  "Version": "0.1.0",
+  "PluginUUID": "local.opendeck-mk10",
+  "CodePathLin": "opendeck-mk10-linux",
+  "CodePathWin": "opendeck-mk10-win.exe",
+  "Icon": "assets/icon",
+  "Category": "Hardware",
+  "OS": [
+    { "Platform": "linux" },
+    { "Platform": "windows", "MinimumVersion": "10" }
+  ],
+  "Actions": [],
+  "DeviceNamespace": "wk"
+}

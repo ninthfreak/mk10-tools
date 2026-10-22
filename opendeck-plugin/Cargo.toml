@@ -1,0 +1,25 @@
+[package]
+name = "opendeck-mk10"
+version = "0.1.0"
+edition = "2024"
+description = "Unofficial OpenDeck device plugin for the Waveshare MK10 (firmware V2.32+)"
+publish = false
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+crc32fast = "1.4"
+data-url = "0.3"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "bmp", "gif"] }
+log = "0.4"
+openaction = "=1.1.5"
+serde_json = "1"
+serialport = "4.7"
+simplelog = "0.12"
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true

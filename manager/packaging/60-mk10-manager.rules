@@ -1,0 +1,10 @@
+# Waveshare MK10 for MK10 Manager (Linux). Install with:
+#   sudo cp 60-mk10-manager.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+# Then unplug and replug the MK10.
+
+# Serial port (1d6b:0104 is a generic Linux-gadget ID): let the logged-in user open it, keep ModemManager off it.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1d6b", ATTRS{idProduct}=="0104", TAG+="uaccess", ENV{ID_MM_DEVICE_IGNORE}="1"
+
+# Keyboard chip (4250:426f): stop it typing into the desktop. Key presses still reach MK10 Manager over the serial port.
+SUBSYSTEM=="input", ATTRS{idVendor}=="4250", ATTRS{idProduct}=="426f", ENV{LIBINPUT_IGNORE_DEVICE}="1"

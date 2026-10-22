@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+manager/startup-error.txt
+
+# Rust
+target/
+
+# Build output
+dist/
+*.plugin.zip
+
+# Logs and captures
+*.log
+
+# Never commit device data or vendor files
+magic.bin
+*.bin
+KeyboardDevice
+DeviceUpgradeFirmware
+ScreenKey*.exe
+sdcard/
