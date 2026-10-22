@@ -25,6 +25,11 @@ DEFAULT_SETTINGS = {
     "tray_hint_shown": False,
     "audio_levels": True,          # measure how loud the speakers and microphone are, for the meters
     "meter_fps": 6,                # redraws a second while a live meter is on screen
+    "slack_enabled": False,        # the token itself lives in its own file, never in here
+    "slack_team_id": "",           # remembered from auth.test so deep links work before the first poll
+    "slack_channels": "",          # conversation ids to count unread messages in
+    "slack_unread_source": "channels",
+    "slack_poll_seconds": 10,
 }
 
 

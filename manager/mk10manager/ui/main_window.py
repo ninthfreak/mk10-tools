@@ -9,8 +9,10 @@ from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QInputDialog, 
                                QTabBar, QTabWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from ..config import APP_NAME, store_image
+from .. import templates as templates_mod
 from .key_editor import KeyEditor
-from .panels import DevicePanel, RulesPanel, VariablesPanel
+from .new_page import COPY, NewPageDialog
+from .panels import DevicePanel, RulesPanel, SlackPanel, VariablesPanel
 from .preview import DevicePreview
 from .screen_editor import ScreenEditor
 from .widgets import dialog_open, dialogs_open
@@ -84,8 +86,10 @@ class MainWindow(QMainWindow):
         self.rules = RulesPanel(ctl)
         self.variables = VariablesPanel(ctl)
         self.device = DevicePanel(ctl)
+        self.slack = SlackPanel(ctl)
         self.bottom.addTab(self.rules, "Context rules")
         self.bottom.addTab(self.variables, "Variables")
+        self.bottom.addTab(self.slack, "Slack")
         self.bottom.addTab(self.device, "Device and app")
         left = QWidget()
         ll = QVBoxLayout(left)
@@ -134,6 +138,7 @@ class MainWindow(QMainWindow):
         self.screen_editor.apply_all.connect(self._screen_all)
         self.rules.changed.connect(lambda: self.ctl.edited())
         self.device.changed.connect(lambda: self.ctl.edited(undoable=False))
+        self.slack.changed.connect(lambda: self.ctl.edited(undoable=False))
         self.tabs.currentChanged.connect(self._tab_changed)
         self.tabs.tabMoved.connect(self._tab_moved)
         self.tabs.tabBarDoubleClicked.connect(lambda i: self._rename(i))
@@ -214,12 +219,26 @@ class MainWindow(QMainWindow):
             self._page_changed(self.ctl.page_id)
 
     def _add_page(self):
+        d = NewPageDialog(self.ctl, self)
         with dialog_open():
-            name, ok = QInputDialog.getText(self, "New page", "Name for the new page:",
-                                            text=self.ctl.config.unique_page_name("Page"))
-        if not ok or not name.strip():
+            ok = d.exec()
+        if not ok or not d.page_name():
             return
-        p = self.ctl.config.add_page(name.strip(), copy_from=self.ctl.page, empty_keys=True)
+        choice, name, wants_rule = d.choice(), d.page_name(), d.wants_rule()
+        if choice == COPY:
+            p = self.ctl.config.add_page(name, copy_from=self.ctl.page, empty_keys=True)
+        else:
+            built = templates_mod.build(choice)
+            p = self.ctl.config.add_page(name)
+            p["keys"] = built.keys
+            p["screen"] = built.screen
+            for key, value in built.variables.items():
+                self.ctl.config.variables.setdefault(key, value)
+            if built.rule and wants_rule:
+                rule = dict(built.rule)
+                rule["page"] = p["id"]
+                self.ctl.config.rules.append(rule)
+                self.rules.reload()
         self._build_tabs()
         self.ctl.edited()
         self.ctl.set_page(p["id"])
@@ -365,6 +384,7 @@ class MainWindow(QMainWindow):
         self.rules.reload()
         self.variables.reload()
         self.device.reload()
+        self.slack.reload()
         self._load_editor()
 
     def _undo_state(self, can_undo, can_redo):

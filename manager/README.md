@@ -38,6 +38,9 @@ If it won't start and mentions "xcb", install `libxcb-cursor0` (Debian, Ubuntu) 
   **Right-click** a key to copy, paste, clear or test it.
 - **Pages** are at the top. Each page has its own keys and its own small screen.
   Right-click a page to rename, duplicate, delete it, or make it the default.
+- **New page** offers ready-made templates as well as a blank one: a Sound and microphone page, and a Slack
+  page. You see exactly what you'd get before you add it, and a template can offer to add its own context
+  rule (the Slack one can switch to itself whenever you're in a huddle).
 - **Context rules** (bottom left) switch pages for you.
   For example: when firefox is active, show the Browser page. Rules higher in the list win.
 - **Variables** are named values. A key can set one; the screen can show it with `{var:name}`;
@@ -55,8 +58,9 @@ If it won't start and mentions "xcb", install `libxcb-cursor0` (Debian, Ubuntu) 
 ### Things a key can do
 
 Keyboard shortcut, type text, media keys, mute or change the volume of the speakers or the microphone,
-open a website or file, run a command, send a web request (Home Assistant and similar), change page,
-set a variable, show a message on the small screen, change brightness, wait.
+Slack (status, away, snooze, post a message, jump to a channel), open a website or file, run a command,
+send a web request (Home Assistant and similar), change page, set a variable, show a message on the small
+screen, change brightness, wait.
 
 ### Text placeholders
 
@@ -68,7 +72,41 @@ For sound: `{out_device}` `{in_device}` (the speakers and microphone in use), `{
 `{level}` `{mic_level}` (how loud they are right now, 0-100), `{mute}` `{mic_mute}` (the word "muted", or
 nothing), and `{mute:Muted|Live}` for your own two words.
 
+For Slack: `{slack_huddle}` `{slack_dnd}` `{slack_unread}` `{slack_mentions}` `{slack_presence}`
+`{slack_status}` `{slack_team}` `{slack_user}`, and `{slack_huddle:Busy|Free}` for your own two words.
+
 A Text face can also run a command every few seconds and show its output with `{output}`.
+
+## Slack
+
+The **Slack** tab connects the app to one workspace. Slack has no local control port, so this uses its Web API:
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From scratch**, and pick
+   your workspace.
+2. Under **OAuth & Permissions**, add the **User Token Scopes** listed on the Slack tab.
+3. **Install to Workspace**, copy the **User OAuth Token** (it starts with `xoxp-`), paste it in and
+   press **Check**.
+
+Some workspaces need an admin to approve a new app first.
+
+**The token is a password.** It's kept in a file of its own in the settings folder, readable only by you —
+never in `config.json`, so it stays out of backups and undo. Press **Check** with the box empty to remove it.
+
+What this gets you:
+
+- Keys and rules that react to **being in a huddle**, **snoozed notifications**, **away**, and **unread
+  messages**.
+- Keys that **set your status**, **snooze**, **set you away or active**, **post a message** and **jump to a
+  channel**.
+- A **Slack** small-screen face showing all of that next to the real microphone.
+
+What Slack doesn't allow, whatever we do:
+
+- It can't tell us whether you're muted **inside** a huddle, and can't start, join or leave one. Use a
+  microphone mute key — it mutes the microphone itself, so it works in Slack, Teams, Zoom and everything else.
+- There's no participant list or "who's speaking" for huddles.
+- Counting unread messages across *everything* uses an endpoint Slack doesn't document, so it may stop
+  working. Listing the conversations you care about is the supported way.
 
 ## Control it from scripts
 

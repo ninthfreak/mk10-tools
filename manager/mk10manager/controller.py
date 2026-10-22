@@ -10,7 +10,7 @@ from PySide6.QtGui import QDesktopServices, QImage
 
 from . import rules as rules_mod
 from .actions import ActionRunner, run_command_output
-from .config import Config
+from .config import Config, config_dir
 from .device.layout import DeviceLayout
 from .device.manager import DeviceManager
 from .render import meters
@@ -18,11 +18,13 @@ from .render.canvas import Renderer
 from .render.template import RenderContext, expand
 from .system.activewin import ActiveAppWatcher
 from .system.audio import AudioMonitor
+from .system.slack import SlackMonitor, channel_ids, read_token
 
 NOT_UNDOABLE = ("variables", "seen_apps")
 # Device and app settings are changed live on the Device tab; undo should never roll them back.
 NOT_UNDOABLE_SETTINGS = ("brightness", "port", "press_feedback", "time_24h", "font_family", "start_minimized",
-                         "tray_hint_shown", "audio_levels", "meter_fps")
+                         "tray_hint_shown", "audio_levels", "meter_fps", "slack_enabled", "slack_team_id",
+                         "slack_channels", "slack_unread_source", "slack_poll_seconds")
 SLOW_TICK_MS = 200          # how often we look at the clock and the message timer when nothing is animating
 _NO_RESULT = object()
 
@@ -77,7 +79,8 @@ class Controller(QObject):
     _output_ready = Signal(str, str)
 
     def __init__(self, config: Config, device: DeviceManager | None = None, watcher: ActiveAppWatcher | None = None,
-                 renderer: Renderer | None = None, audio: AudioMonitor | None = None, parent=None):
+                 renderer: Renderer | None = None, audio: AudioMonitor | None = None,
+                 slack: SlackMonitor | None = None, parent=None):
         super().__init__(parent)
         self.config = config
         self.renderer = renderer or Renderer()
@@ -85,7 +88,8 @@ class Controller(QObject):
         self.watcher = watcher or ActiveAppWatcher()
         self.audio = audio or AudioMonitor()
         self.audio.set_levels_enabled(bool(config.settings.get("audio_levels", True)))
-        self.runner = ActionRunner(self.audio)
+        self.slack = slack or SlackMonitor()
+        self.runner = ActionRunner(self.audio, self.slack)
         self.layout = DeviceLayout.default()
         self.page_id = config.default_page()["id"]
         self.prev_page_id = None
@@ -122,6 +126,7 @@ class Controller(QObject):
         self.device.device_error.connect(lambda e: self.notify.emit("MK10 says: %s" % e))
         self.watcher.changed.connect(self._on_app)
         self.audio.changed.connect(self._on_audio)
+        self.slack.changed.connect(self._on_slack)
         self.runner.ui_action.connect(self._on_ui_action)
         self.runner.failed.connect(self.notify.emit)
         self._output_ready.connect(self._on_output)
@@ -131,6 +136,8 @@ class Controller(QObject):
         self.device.start()
         self.watcher.start()
         self.audio.start()
+        self.apply_slack_settings()
+        self.slack.start()
         self._update_live_meters()
         self._tick.start()
         self.refresh(force=True)
@@ -139,6 +146,7 @@ class Controller(QObject):
         self._tick.stop()
         self.watcher.stop()
         self.audio.stop()
+        self.slack.stop()
         self.device.stop()
         if self._save_timer.isActive():
             self._save_timer.stop()
@@ -162,7 +170,7 @@ class Controller(QObject):
         return RenderContext(now=datetime.now(), time_24h=bool(s.get("time_24h", True)), app=self.app,
                              title=self.title, page=self.page["name"], variables=dict(self.config.variables),
                              outputs=self.outputs, font_family=s.get("font_family") or "",
-                             audio=self.audio.state)
+                             audio=self.audio.state, slack=self.slack.state)
 
     # ---------------------------------------------------------------- drawing
     def refresh(self, force: bool = False):
@@ -247,6 +255,10 @@ class Controller(QObject):
             interval = SLOW_TICK_MS
         if self._tick.interval() != interval:
             self._tick.setInterval(interval)
+
+    def _on_slack(self):
+        self._dirty = True
+        self._evaluate_rules()
 
     def _on_audio(self):
         self._dirty = True
@@ -398,7 +410,7 @@ class Controller(QObject):
 
     def _evaluate_rules(self):
         target = rules_mod.evaluate(self.config.rules, self.app, self.title, self.config.variables,
-                                    audio=self.audio.state)
+                                    audio=self.audio.state, slack=self.slack.state)
         if target is None and self.config.settings.get("fallback_to_default", True) and self.config.rules:
             target = self.config.default_page()["id"]
         if target == self._last_rule_result:
@@ -480,7 +492,16 @@ class Controller(QObject):
         self.device.set_port(s.get("port", "auto"))
         self.set_brightness(s.get("brightness", 80), persist=False)
         self.apply_audio_settings()
+        self.apply_slack_settings()
         self.edited(undoable=False)
+
+    def apply_slack_settings(self):
+        """Re-read the token file and the Slack tab's settings. Called at start-up and after a change there."""
+        s = self.config.settings
+        folder = self.config.path.parent if self.config.path else config_dir()
+        self.slack.configure(read_token(folder), channel_ids(s.get("slack_channels", "")),
+                             s.get("slack_poll_seconds", 10), s.get("slack_unread_source", "channels"),
+                             bool(s.get("slack_enabled", False)))
 
     def apply_audio_settings(self):
         """Called when the live-meter switch or the meter speed changes on the Device tab."""

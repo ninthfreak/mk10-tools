@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from ..system.audio import INPUT, OUTPUT, AudioState
+from ..system.slack import SlackState
 
 PLACEHOLDER = re.compile(r"\{([a-zA-Z_]+)(?::([^{}]*))?\}")
 
@@ -22,7 +23,10 @@ HELP = (
     "{volume}  {mic_volume}  their volume, 0-100\n"
     "{level}  {mic_level}  how loud they are right now, 0-100\n"
     "{mute}  {mic_mute}  “muted”, or nothing when they aren't\n"
-    "{mute:Muted|Live}  your own two words instead"
+    "{mute:Muted|Live}  your own two words instead\n"
+    "{slack_huddle}  {slack_dnd}  {slack_unread}  {slack_mentions}\n"
+    "{slack_presence}  {slack_status}  {slack_team}  {slack_user}\n"
+    "{slack_huddle:In a huddle|Free}  your own two words again"
 )
 
 
@@ -37,6 +41,7 @@ class RenderContext:
     outputs: dict = field(default_factory=dict)       # command -> latest output
     font_family: str = ""
     audio: AudioState = field(default_factory=AudioState)
+    slack: SlackState = field(default_factory=SlackState)
 
 
 def format_time(now: datetime, h24: bool, seconds: bool = False) -> str:
@@ -93,9 +98,40 @@ def expand(text: str, ctx: RenderContext, output: str = "") -> str:
             if side.muted is None:
                 return ""
             return on if side.muted else off
+        if name.startswith("slack_"):
+            return _slack(name, arg, ctx.slack or SlackState())
         return m.group(0)
 
     return PLACEHOLDER.sub(sub, text)
+
+
+def _two_words(arg, when_true: str) -> tuple[str, str]:
+    words = [w.strip() for w in (arg or "").split("|")]
+    return (words[0] if words and words[0] else when_true), (words[1] if len(words) > 1 else "")
+
+
+def _slack(name: str, arg, s: SlackState) -> str:
+    if not s.connected and name not in ("slack_team", "slack_user"):
+        return ""
+    if name == "slack_huddle":
+        on, off = _two_words(arg, "in a huddle")
+        return on if s.in_huddle else off
+    if name == "slack_dnd":
+        on, off = _two_words(arg, "snoozed")
+        return on if s.dnd else off
+    if name == "slack_unread":
+        return str(s.unread) if s.unread else ""
+    if name == "slack_mentions":
+        return str(s.mentions) if s.mentions else ""
+    if name == "slack_presence":
+        return s.presence or ""
+    if name == "slack_status":
+        return s.status_text or ""
+    if name == "slack_team":
+        return s.team_name or ""
+    if name == "slack_user":
+        return s.user_name or ""
+    return ""
 
 
 def uses_seconds(text: str) -> bool:

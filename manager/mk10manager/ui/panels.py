@@ -1,9 +1,11 @@
 """Bottom tabs: context rules, variables, and device settings."""
 
+import threading
+
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFontComboBox, QFormLayout, QFrame,
-                               QHBoxLayout, QHeaderView, QLabel, QPushButton, QScrollArea, QSlider,
+                               QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QScrollArea, QSlider,
                                QSpinBox, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
 
 from .. import rules as rules_mod
@@ -11,6 +13,7 @@ from ..config import config_dir
 from ..device.manager import all_ports
 from ..system import audio as audio_mod
 from ..system import autostart, inputs
+from ..system import slack as slack_mod
 from .condition_row import ConditionRow
 
 
@@ -253,6 +256,165 @@ class VariablesPanel(QWidget):
         r = self.table.currentRow()
         if r >= 0 and self.table.item(r, 0):
             self.ctl.set_variable(self.table.item(r, 0).text().strip(), None)
+
+
+SLACK_HELP = (
+    "Slack has no local control port, so this uses its Web API with a token of your own.\n\n"
+    "1. Go to api.slack.com/apps and click Create New App → From scratch. Pick your workspace.\n"
+    "2. Open OAuth & Permissions and add these User Token Scopes:\n     %s\n"
+    "3. Click Install to Workspace, then copy the User OAuth Token (it starts with xoxp-).\n"
+    "4. Paste it below and press Check.\n\n"
+    "Some workspaces need an admin to approve a new app first." % ", ".join(slack_mod.SCOPES))
+
+
+class SlackPanel(QWidget):
+    """Token, workspace and what to watch. The token never goes into config.json."""
+
+    changed = Signal()
+    _checked = Signal(bool, str)
+
+    def __init__(self, ctl, parent=None):
+        super().__init__(parent)
+        self.ctl = ctl
+        s = ctl.config.settings
+        lay = QHBoxLayout(self)
+        left = QFormLayout()
+        lay.addLayout(left, 3)
+        right = QVBoxLayout()
+        lay.addLayout(right, 2)
+
+        self.enabled = QCheckBox("Talk to Slack")
+        self.enabled.setChecked(bool(s.get("slack_enabled", False)))
+        left.addRow("", self.enabled)
+        trow = QHBoxLayout()
+        self.token = QLineEdit(slack_mod.read_token(self._folder()))
+        self.token.setEchoMode(QLineEdit.Password)
+        self.token.setPlaceholderText("xoxp-...")
+        self.check = QPushButton("Check")
+        self.check.clicked.connect(self._check)
+        trow.addWidget(self.token, 1)
+        trow.addWidget(self.check)
+        left.addRow("User token", self._wrap(trow))
+        self.who = _muted("")
+        left.addRow("", self.who)
+        self.channels = QLineEdit(s.get("slack_channels", ""))
+        self.channels.setPlaceholderText("C01ABCDEFG, C02HIJKLMN")
+        self.channels.setToolTip("Conversation IDs to count unread messages in. In Slack, open a channel, "
+                                 "click its name, and the ID is at the bottom of the About tab.")
+        left.addRow("Watch these channels", self.channels)
+        self.unread_source = QComboBox()
+        for v, l in slack_mod.UNREAD_SOURCES:
+            self.unread_source.addItem(l, v)
+        self.unread_source.setCurrentIndex(max(0, self.unread_source.findData(
+            s.get("slack_unread_source", "channels"))))
+        left.addRow("Count unread from", self.unread_source)
+        prow = QHBoxLayout()
+        self.poll = QSpinBox()
+        self.poll.setRange(5, 600)
+        self.poll.setValue(int(s.get("slack_poll_seconds", 10)))
+        prow.addWidget(self.poll)
+        prow.addWidget(QLabel("seconds"))
+        prow.addStretch(1)
+        left.addRow("Check Slack every", self._wrap(prow))
+        self.state_line = _muted("")
+        left.addRow("Now", self.state_line)
+
+        help_label = _muted(SLACK_HELP)
+        help_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        right.addWidget(help_label)
+        right.addWidget(_muted("The token is kept in a file of its own in the settings folder, readable only "
+                               "by you — never in config.json, so it stays out of backups and undo. Anyone who "
+                               "gets it can act as you in Slack: press Check with the box empty to remove it."))
+        right.addWidget(_muted("Slack can't tell us whether your microphone is muted in a huddle, and can't "
+                               "start or join one. Use a microphone mute key for that: it works in Slack, "
+                               "Teams and everything else."))
+        right.addStretch(1)
+
+        self.enabled.toggled.connect(lambda on: self._set("slack_enabled", bool(on)))
+        self.channels.textChanged.connect(lambda t: self._set("slack_channels", t.strip()))
+        self.unread_source.currentIndexChanged.connect(
+            lambda i: self._set("slack_unread_source", self.unread_source.itemData(i)))
+        self.poll.valueChanged.connect(lambda v: self._set("slack_poll_seconds", int(v)))
+        self._checked.connect(self._check_done)
+        ctl.slack.changed.connect(self.refresh_state)
+        self.refresh_state()
+
+    def _folder(self):
+        return self.ctl.config.path.parent if self.ctl.config.path else config_dir()
+
+    @staticmethod
+    def _wrap(layout):
+        w = QWidget()
+        layout.setContentsMargins(0, 0, 0, 0)
+        w.setLayout(layout)
+        return w
+
+    def _set(self, key, value):
+        self.ctl.config.settings[key] = value
+        self.ctl.apply_slack_settings()
+        self.changed.emit()
+
+    def _check(self):
+        """Save the token, then ask Slack who it belongs to. The call happens off the GUI thread."""
+        token = self.token.text().strip()
+        ok, problem = slack_mod.write_token(self._folder(), token)
+        if not ok:
+            self.who.setText("Couldn't save the token: %s" % problem)
+            return
+        self.ctl.apply_slack_settings()
+        self.changed.emit()
+        if not token:
+            self.who.setText("Token removed.")
+            return
+        self.check.setEnabled(False)
+        self.who.setText("Asking Slack...")
+
+        def work():
+            try:
+                me = slack_mod.SlackClient(token).call("auth.test")
+                self._checked.emit(True, "%s|%s|%s" % (me.get("user") or "?", me.get("team") or "?",
+                                                       me.get("team_id") or ""))
+            except Exception as e:
+                self._checked.emit(False, str(e))
+        threading.Thread(target=work, name="slack-check", daemon=True).start()
+
+    def _check_done(self, ok, text):
+        self.check.setEnabled(True)
+        if not ok:
+            self.who.setText(text)
+            return
+        user, team, team_id = text.split("|", 2)
+        self.who.setText("Signed in as %s in %s." % (user, team))
+        if team_id:
+            self.ctl.config.settings["slack_team_id"] = team_id
+            self.changed.emit()
+        self.ctl.slack.refresh_soon()
+
+    def refresh_state(self):
+        st = self.ctl.slack.state
+        if not self.ctl.config.settings.get("slack_enabled"):
+            self.state_line.setText("Switched off.")
+        elif st.connected:
+            bits = ["in a huddle" if st.in_huddle else "no huddle", st.presence or "?"]
+            if st.dnd:
+                bits.append("snoozed")
+            if st.unread:
+                bits.append("%d unread" % st.unread)
+            self.state_line.setText(", ".join(bits))
+        else:
+            self.state_line.setText(st.note or "Not connected yet.")
+
+    def reload(self):
+        s = self.ctl.config.settings
+        for w, v in ((self.enabled, s.get("slack_enabled", False)),):
+            w.blockSignals(True)
+            w.setChecked(bool(v))
+            w.blockSignals(False)
+        for w, v in ((self.channels, s.get("slack_channels", "")),):
+            w.blockSignals(True)
+            w.setText(str(v))
+            w.blockSignals(False)
+        self.refresh_state()
 
 
 class DevicePanel(QWidget):

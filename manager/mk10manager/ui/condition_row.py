@@ -7,7 +7,7 @@ Used twice: by a context rule ("when Firefox is active, show the Browser page") 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QWidget
 
-from ..conditions import AUDIO_CONDITIONS, CONDITIONS, MUTE_CHOICES
+from ..conditions import CHOICE_CONDITIONS, CONDITIONS
 
 
 class ConditionRow(QWidget):
@@ -59,13 +59,10 @@ class ConditionRow(QWidget):
         for t in (self.t_from, self.t_to):
             t.setInputMask("99:99")
             t.setFixedWidth(64)
-        self.mute = QComboBox()
-        for v, l in MUTE_CHOICES:
-            self.mute.addItem(l, v)
-        self.mute.setCurrentIndex(max(0, self.mute.findData(cond.get("value") if when in AUDIO_CONDITIONS
-                                                            else "yes")))
+        self.choice = QComboBox()
+        self._fill_choice(when, cond.get("value"))
         for w in (self.app, self.title, self.var, self.var_is, self.var_value, self.t_from, self.t_and,
-                  self.t_to, self.mute):
+                  self.t_to, self.choice):
             lay.addWidget(w)
         lay.addStretch(1)
         self.lay = lay
@@ -79,11 +76,22 @@ class ConditionRow(QWidget):
         self.var_value.textChanged.connect(lambda t: self._set("value", t))
         self.t_from.textChanged.connect(lambda t: self._set("from", t))
         self.t_to.textChanged.connect(lambda t: self._set("to", t))
-        self.mute.currentIndexChanged.connect(lambda i: self._set("value", self.mute.itemData(i)))
+        self.choice.currentIndexChanged.connect(lambda i: self._set("value", self.choice.itemData(i)))
 
     def add_widget(self, w):
         """Put something after the condition widgets but before the stretch (the rule's page picker)."""
         self.lay.insertWidget(self.lay.count() - 1, w)
+
+    def _fill_choice(self, when, value):
+        """The one combo box serves every condition whose value comes from a short list."""
+        choices = CHOICE_CONDITIONS.get(when) or []
+        self.choice.blockSignals(True)
+        self.choice.clear()
+        for v, l in choices:
+            self.choice.addItem(l, v)
+        if choices:
+            self.choice.setCurrentIndex(max(0, self.choice.findData(value)))
+        self.choice.blockSignals(False)
 
     def _show(self):
         w = self.cond.get("when", "app")
@@ -93,14 +101,19 @@ class ConditionRow(QWidget):
             x.setVisible(w == "variable")
         for x in (self.t_from, self.t_and, self.t_to):
             x.setVisible(w == "time")
-        self.mute.setVisible(w in AUDIO_CONDITIONS)
+        self.choice.setVisible(w in CHOICE_CONDITIONS)
 
     def _when_changed(self, i):
-        self.cond["when"] = self.when.itemData(i)
-        w = self.cond["when"]
-        self.cond["value"] = {"app": self.app.currentText().strip(), "title": self.title.text(),
-                              "variable": self.var_value.text()}.get(w, self.mute.currentData()
-                                                                     if w in AUDIO_CONDITIONS else "")
+        self.cond["when"] = w = self.when.itemData(i)
+        if w in CHOICE_CONDITIONS:
+            # keep the old answer if the new condition also offers it, else take its first
+            wanted = self.cond.get("value")
+            values = [v for v, _ in CHOICE_CONDITIONS[w]]
+            self.cond["value"] = wanted if wanted in values else values[0]
+            self._fill_choice(w, self.cond["value"])
+        else:
+            self.cond["value"] = {"app": self.app.currentText().strip(), "title": self.title.text(),
+                                  "variable": self.var_value.text()}.get(w, "")
         self._show()
         self.changed.emit()
 

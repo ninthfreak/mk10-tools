@@ -84,7 +84,9 @@ def test_edit_key_through_editor(qapp, gui):
 
 def test_pages_swap_paste_and_screen(qapp, gui, monkeypatch):
     win, ctl, dev, cfg = gui
-    monkeypatch.setattr("PySide6.QtWidgets.QInputDialog.getText", lambda *a, **k: ("Games", True))
+    # the New page window really gets built; we just answer it instead of showing it
+    monkeypatch.setattr("mk10manager.ui.new_page.NewPageDialog.exec", lambda self: 1)
+    monkeypatch.setattr("mk10manager.ui.new_page.NewPageDialog.page_name", lambda self: "Games")
     win._add_page()
     assert [p["name"] for p in cfg.pages] == ["Main", "Games"]
     assert ctl.page["name"] == "Games" and win.tabs.currentIndex() == 1
