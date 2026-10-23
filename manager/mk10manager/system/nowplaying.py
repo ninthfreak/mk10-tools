@@ -358,12 +358,27 @@ def describe_backend(backend=None) -> str:
 
 
 # ---------------------------------------------------------------------------- checking it works
+def _build_id() -> str:
+    """Which commit this copy is, so a report can't be mistaken for one from an older build."""
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    try:
+        r = subprocess.run(["git", "-C", root, "log", "-1", "--format=%h %cd", "--date=short"],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return "unknown (not a git checkout)"
+
+
 def report(reads: int = 3, gap: float = 1.5) -> str:
     """What the system says is playing, in detail. Run this on the machine itself before trusting the face."""
     lines = ["MK10 Manager: what's playing", "=" * 40,
              "System: %s" % sys.platform,
              "Python: %s" % sys.version.split()[0],
-             "Running: %s" % (sys.executable or "?")]
+             "Running: %s" % (sys.executable or "?"),
+             "Build:   %s" % _build_id()]
     if IS_WIN:
         lines.append("")
         lines.append("PyWinRT packages:")
