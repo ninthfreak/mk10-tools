@@ -47,6 +47,7 @@ import datetime
 import io
 import json
 import os
+import re
 import struct
 import sys
 import threading
@@ -121,6 +122,42 @@ def qmap_encode(d):
     for k in sorted(d, reverse=True):
         out += _qstr(k) + _qstr(d[k])
     return out
+
+
+def _qbytes(b):
+    """Qt5 QDataStream << QByteArray: length then the raw bytes (0xFFFFFFFF means null)."""
+    return struct.pack(">I", 0xFFFFFFFF) if b is None else struct.pack(">I", len(b)) + b
+
+
+def qmap_bytes_encode(d):
+    """Qt5 QDataStream << QMap<QString,QByteArray>, which is what SEND_PIXMAP carries."""
+    out = struct.pack(">i", len(d))
+    for k in sorted(d, reverse=True):
+        out += _qstr(k) + _qbytes(d[k])
+    return out
+
+
+def qmap_bytes_decode(b):
+    """Inverse of qmap_bytes_encode. Values come back as bytes; None if it doesn't parse."""
+    try:
+        (count,) = struct.unpack_from(">I", b, 0)
+        if count > 10000:
+            return None
+        pos, out = 4, {}
+        for _ in range(count):
+            key, pos = _qstr_at(b, pos)
+            (n,) = struct.unpack_from(">I", b, pos)
+            pos += 4
+            if n == 0xFFFFFFFF:
+                out[key] = b""
+                continue
+            if pos + n > len(b):
+                return None
+            out[key] = b[pos:pos + n]
+            pos += n
+        return out if pos == len(b) else None
+    except (struct.error, UnicodeDecodeError):
+        return None
 
 
 def qmap_decode(b):
@@ -435,8 +472,9 @@ class Link:
         body = {"method": method, "parameters": parameters or {}, "requestId": seq}
         return self.send_frame(CMD_JSON, json.dumps(body, separators=(",", ":")).encode(), seq)
 
-    def send_v1(self, cmd, fields=None):
-        payload = qmap_encode(fields or {})
+    def send_v1(self, cmd, fields=None, payload=None):
+        if payload is None:
+            payload = qmap_encode(fields or {})
         self._write(build_frame_v1(cmd, payload), Packet("v1", None, 0, cmd, payload))
 
     def write_raw(self, data, progress=False):
@@ -1085,6 +1123,151 @@ def cmd_update(args):
 
 # ---------------------------------------------------------------- self-test
 
+# ---------------------------------------------------------------- exploring the unknown parts
+
+#: Any method the firmware doesn't know makes it list the ones it does, which is how we find them.
+METHOD_FISHING_NAME = "mk10probeWhichMethodsExist"
+
+#: Old-format commands that only read. None of these write files or change settings.
+READONLY_V1 = [(8, "GET_VERSION"), (3, "GET_THEME"), (5, "SCAN_STATE")]
+
+#: getFilesBySuffix takes parameters nobody has written down. These are the obvious guesses.
+FILE_LIST_GUESSES = [{"suffix": ".jpg"}, {"suffix": "jpg"},
+                     {"path": "/mnt/SDCARD", "suffix": ".json"}, {}]
+
+
+def method_list_from_error(text):
+    """The error names the available methods; pull them out if we recognise the shape."""
+    if not text:
+        return []
+    inside = re.search(r"\[([^\]]*)\]", str(text))
+    body = inside.group(1) if inside else str(text).split(":")[-1]
+    names = [n.strip().strip("'\"") for n in body.replace(",", " ").split()]
+    return [n for n in names if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{2,}", n)]
+
+
+def ask_json(link, method, params=None, timeout=3.0):
+    seq = link.send_json(method, params or {})
+    pkt = link.wait_for(lambda p: p.proto == "v2" and p.cmd == CMD_JSON
+                        and (p.seq == seq or p.seq == 0xFFFFFFFF), timeout)
+    return show_reply("%s %s" % (method, json.dumps(params or {}, separators=(",", ":"))), pkt)
+
+
+def ask_v1(link, cmd, title, fields=None, payload=None, timeout=3.0):
+    link.send_v1(cmd, fields, payload)
+    pkt = link.wait_for(lambda p: p.proto == "v1" and p.cmd == cmd, timeout)
+    print("\n== V1 %d %s" % (cmd, title))
+    if pkt is None:
+        print("  No reply within the timeout.")
+        return None
+    fields_back = qmap_decode(pkt.payload)
+    if fields_back is not None:
+        print("  reply fields:")
+        for k, v in sorted(fields_back.items()):
+            print("    %-28s %s" % (k, v[:120] if isinstance(v, str) else v))
+        return fields_back
+    as_bytes = qmap_bytes_decode(pkt.payload)
+    if as_bytes is not None:
+        print("  reply is a name -> bytes map:")
+        for k, v in sorted(as_bytes.items()):
+            print("    %-28s %d bytes" % (k, len(v)))
+        return as_bytes
+    print("  reply payload (%d bytes), not a map we recognise:" % len(pkt.payload))
+    print(hexdump(pkt.payload))
+    return None
+
+
+def cmd_explore(args):
+    """Read-only reconnaissance: what methods exist, and what the read commands say."""
+    link = open_link(args)
+    try:
+        print("Nothing here writes a file, deletes anything or changes a setting.")
+        seq = link.send_json("getInfo")
+        pkt = link.wait_for(lambda p: p.proto == "v2" and p.cmd == CMD_JSON and p.seq == seq, 3.0)
+        result = ((describe(pkt) if pkt else None) or {}).get("result") or {}
+        if result:
+            print("\n== getInfo\n  %s, firmware %s, canvas %sx%s   (the log has the whole reply)"
+                  % (result.get("deviceModel", "?"), result.get("deviceVersion", "?"),
+                     result.get("deviceWidth", "?"), result.get("deviceHeight", "?")))
+        else:
+            print("\nNo answer in the new format. Is this older firmware? Try 'probe' first.")
+
+        reply = ask_json(link, METHOD_FISHING_NAME)
+        methods = method_list_from_error((reply or {}).get("errorString"))
+        if methods:
+            print("\n== Methods this firmware admits to")
+            for name in sorted(methods):
+                mark = "  (we use it)" if name in ("getInfo", "setBacklight") else ""
+                mark = "  (NEVER sent from here)" if name in NEVER_SEND else mark
+                print("  %-24s%s" % (name, mark))
+            unknown = [m for m in methods if m not in NEVER_SEND
+                       and m not in ("getInfo", "setBacklight", "keyStateChanged")]
+            print("\n  Not understood yet: %s" % (", ".join(sorted(unknown)) or "(none)"))
+        else:
+            print("\n  Couldn't read a method list out of that reply.")
+
+        print("\n---- read-only old-format commands ----")
+        for cmd, title in READONLY_V1:
+            ask_v1(link, cmd, title)
+
+        if "getFilesBySuffix" in methods or args.force_file_list:
+            print("\n---- getFilesBySuffix: guessing its parameters (read-only) ----")
+            for params in FILE_LIST_GUESSES:
+                ask_json(link, "getFilesBySuffix", params)
+
+        if args.try_volume:
+            print("\n---- setVolume: the parameter name is a guess; this only changes the device speaker ----")
+            for params in ({"level": 3}, {"volume": 3}, {"value": 3}):
+                ask_json(link, "setVolume", params)
+
+        print("\nDone. The whole exchange is in the log file.")
+    finally:
+        link.close()
+    return 0
+
+
+def cmd_pixmap(args):
+    """Try SEND_PIXMAP: the one lead for updating part of the display instead of all of it."""
+    try:
+        import PIL  # noqa: F401
+    except ImportError:
+        sys.exit("This needs Pillow:  py -m pip install pillow")
+    link = open_link(args)
+    try:
+        info = v1_handshake(link)
+        if info is None:
+            print("No answer to the old-format handshake. Try 'probe' first.")
+            return 1
+        print("Device: %s, firmware %s" % (info.get("screen_model", "?"), info.get("version", "?")))
+
+        names = list(args.name or [])
+        if not names:
+            theme = ask_v1(link, V1_GET_THEME, "GET_THEME (what images does it know about?)") or {}
+            names = [k for k in theme if k not in ("bytesTotal", "bytesAvailable")][:6]
+            if names:
+                print("\n  Trying the names GET_THEME returned.")
+            else:
+                names = ["0", "1", "key0", "0.jpg", "/mnt/SDCARD/0.jpg"]
+                print("\n  GET_THEME listed nothing, so falling back to guesses.")
+
+        picture = make_test_pattern(args.width, args.height, tile=min(args.width, args.height))
+        print("\nSending a %dx%d picture (%d bytes) under each name in turn." % (
+            args.width, args.height, len(picture)))
+        print("WATCH THE DEVICE. Anything that changes is the answer; nothing changing is also an answer.")
+        for name in names:
+            ask_v1(link, 12, "SEND_PIXMAP {%r: <%d bytes>}" % (name, len(picture)),
+                   payload=qmap_bytes_encode({name: picture}))
+            time.sleep(args.pause)
+        print("\n---- SEND_PIXMAP with nothing in it, in case the error is informative ----")
+        ask_v1(link, 12, "SEND_PIXMAP {}", payload=qmap_bytes_encode({}))
+
+        print("\nIf the display is now wrong, start MK10 Manager (or run show-test) to repaint it.")
+        print("Nothing above wrote a file: SEND_PIXMAP moves pixels, not storage.")
+    finally:
+        link.close()
+    return 0
+
+
 def cmd_selftest(_args):
     ok = True
 
@@ -1152,6 +1335,16 @@ def cmd_selftest(_args):
 
     items = [{"type": "keyState", "row": 1, "col": 3, "pressed": 1}, {"type": "openWeb", "Url": "x"}]
     check("Qt variant-map encoding round-trips", qvariant_maps_decode(qvariant_maps_encode(items)) == items)
+
+    pixmap = {"a.jpg": b"\xff\xd8\x00bin", "b": b""}
+    check("QMap<QString,QByteArray> round-trips (SEND_PIXMAP's payload)",
+          qmap_bytes_decode(qmap_bytes_encode(pixmap)) == pixmap)
+    check("an empty name map round-trips", qmap_bytes_decode(qmap_bytes_encode({})) == {})
+    check("rubbish isn't mistaken for a name map", qmap_bytes_decode(b"not a map at all") is None)
+    check("method names come out of the firmware's error",
+          method_list_from_error("Unknown method: x. Available methods: [getInfo, setBacklight, playAudio]")
+          == ["getInfo", "setBacklight", "playAudio"])
+    check("a useless error yields no method names", method_list_from_error("") == [])
 
     fake_prog = (b"\x7fELF\x01\x01\x01" + b"\0" * 11 + struct.pack("<H", 40) + b"\0" * 32
                  + b"/lib/ld-linux-armhf.so.3\0" + b"FIXEDCMDHEAD V2.99 V2.99" + b"\0" * 300_000)
@@ -1373,6 +1566,18 @@ def main():
     common(p)
     p = sub.add_parser("send-test", help="rehearsal: two tiny harmless file transfers")
     common(p)
+    p = sub.add_parser("explore", help="read-only: list the firmware's methods and try the read commands")
+    common(p)
+    p.add_argument("--try-volume", action="store_true",
+                   help="also try setVolume's parameter names (changes the device speaker, nothing else)")
+    p.add_argument("--force-file-list", action="store_true",
+                   help="try getFilesBySuffix even if the method list didn't mention it")
+    p = sub.add_parser("pixmap", help="experiment: can SEND_PIXMAP update part of the display?")
+    common(p)
+    p.add_argument("--name", action="append", help="image name to try (repeatable); default: ask GET_THEME")
+    p.add_argument("--width", type=int, default=128)
+    p.add_argument("--height", type=int, default=128)
+    p.add_argument("--pause", type=float, default=1.5, help="seconds between attempts, to watch the screen")
     p = sub.add_parser("update", help="send a firmware update (asks before changing anything)")
     common(p)
     p.add_argument("file", help="the KeyboardDevice program file, or the ScreenKey installer .exe to extract it from")
@@ -1391,7 +1596,8 @@ def main():
             sys.exit("This needs pyserial:  py -m pip install pyserial   (Linux: pip install pyserial)")
     handler = {"selftest": cmd_selftest, "demo": cmd_demo, "list": cmd_list, "probe": cmd_probe,
                "backlight": cmd_backlight, "show-test": cmd_show_test, "storage": cmd_storage,
-               "send-test": cmd_send_test, "update": cmd_update}[args.cmd]
+               "send-test": cmd_send_test, "update": cmd_update, "explore": cmd_explore,
+               "pixmap": cmd_pixmap}[args.cmd]
     sys.exit(handler(args))
 
 

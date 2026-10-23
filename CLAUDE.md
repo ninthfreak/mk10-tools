@@ -26,6 +26,8 @@ Read `docs/protocol.md` before touching device code, and `docs/research-notes.md
   - `cd opendeck-plugin && cargo test && cargo build --release`.
   - End-to-end: `python tests/fake_opendeck.py target/release/opendeck-mk10` (needs `websockets` and `Pillow`).
 - **Probe:** `python probe/mk10probe.py selftest` (no device), `demo` (simulated device), `probe --port COM6`.
+  - `explore` (read-only) lists the firmware's JSON methods by asking for one that can't exist, then runs the
+    read-only V1 commands. `pixmap` tests whether SEND_PIXMAP can redraw part of the display.
 - **What's playing:** `manager/nowplaying-windows.bat` (double-click), `run-windows.bat nowplaying` or
   `./run-linux.sh nowplaying` prints what this PC reports (packages found, track, position, artwork) and
   saves it to `nowplaying-report.txt` in the settings folder. Use it rather than guessing when the Now
