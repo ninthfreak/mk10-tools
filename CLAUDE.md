@@ -31,7 +31,8 @@ Read `docs/protocol.md` before touching device code, and `docs/research-notes.md
     `{"suffixs": [".jpg"]}` — an array, and yes it is spelled that way). `pixmap` tests whether SEND_PIXMAP
     can redraw part of the display. `theme-strings FILE` is offline and needs no device: it mines a ScreenKey
     installer or the extracted `KeyboardDevice` for the theme format's vocabulary, and `unpack FILE --out DIR`
-    lists or extracts archives packed inside the installer.
+    lists or extracts archives packed inside the installer, and `theme-dig FILE` hunts for the theme itself as
+    plain JSON (the installer keeps some of its payload uncompressed — that is how the firmware is extracted).
 - **What's playing:** `manager/nowplaying-windows.bat` (double-click), `run-windows.bat nowplaying` or
   `./run-linux.sh nowplaying` prints what this PC reports (packages found, track, position, artwork) and
   saves it to `nowplaying-report.txt` in the settings folder. Use it rather than guessing when the Now
