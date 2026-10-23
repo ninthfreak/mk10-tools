@@ -50,9 +50,12 @@ Considered and set aside:
   `protocol.md`). If one can run on the small screen while the PC sends key pictures, we'd get an on-device clock
   that keeps going without the PC. Needs the SD card's `config.json` (theme format) and experiments with V1
   SEND_PIXMAP.
-- **`getFilesBySuffix`.** The real device wants a parameter spelled `suffixs`; every other name answers
-  `Missing 'suffixs' parameter`. The value's shape is still unknown — `explore` now reads the name out of the
-  complaint and retries with a string, a list and a comma-separated list. Read-only, so it is safe to poke.
+- **`getFilesBySuffix`.** Worked out on the real device: `{"suffixs": [".jpg", ".png"]}` answers
+  `{"filePaths": [...]}`. The name is spelled `suffixs` and the value must be an array. On a device with no
+  theme installed it returned an empty list for images, so the open question is which folders it looks in —
+  `mk10probe.py files` sweeps suffixes and tries passing a folder under half a dozen parameter names. If a
+  folder parameter exists, the SD card's `config.json` (the theme format) becomes readable, which is the one
+  thread still connected to the on-device clock idea.
 - **`keyboardInput`.** If the device can type keystrokes itself, Wayland shortcut problems on Linux disappear. Untested.
 - **Second hand.** A clock with a second hand sends the full 896×304 picture every second. Check for flicker on real
   hardware.

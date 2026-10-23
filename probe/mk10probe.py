@@ -1249,6 +1249,62 @@ def cmd_explore(args):
     return 0
 
 
+#: getFilesBySuffix wants {"suffixs": [...]} and answers {"filePaths": [...]}. Confirmed on a real V2.32.
+FILE_SUFFIX_SWEEP = [
+    [".jpg", ".jpeg", ".png", ".bmp", ".gif"],
+    [".json", ".conf", ".ini", ".txt", ".xml"],
+    [".bin", ".dat", ".so", ".ttf", ".zip"],
+    ["jpg", "png", "json"],              # without the dot, in case matching differs
+    [""],                                # an empty suffix might mean everything
+    [],                                  # ... and so might an empty list
+]
+#: It ignores a folder we pass under these names, or complains about one of them. Either tells us something.
+PATH_PARAM_GUESSES = ["path", "dir", "directory", "folder", "root", "dirPath"]
+
+
+def ask_files(link, params):
+    reply = ask_json(link, "getFilesBySuffix", params)
+    paths = ((reply or {}).get("result") or {}).get("filePaths")
+    if isinstance(paths, list):
+        print("  -> %d file(s)" % len(paths))
+        for path in paths[:40]:
+            print("       %s" % path)
+        if len(paths) > 40:
+            print("       ... and %d more" % (len(paths) - 40))
+    return reply, paths
+
+
+def cmd_files(args):
+    """Read-only: ask the device what files it can see, now that we know how to ask."""
+    link = open_link(args)
+    try:
+        print("Read-only. getFilesBySuffix only lists paths; nothing here writes or deletes.")
+        link.send_json("getInfo")
+        link.wait_for(lambda p: p.proto == "v2" and p.cmd == CMD_JSON, 3.0)
+
+        if args.suffix:
+            ask_files(link, {"suffixs": list(args.suffix)})
+        else:
+            print("\n---- what does it find, by suffix? ----")
+            for group in FILE_SUFFIX_SWEEP:
+                ask_files(link, {"suffixs": group})
+
+        folders = list(args.path or [])
+        if folders:
+            print("\n---- does it take a folder? (the error messages are the point) ----")
+            suffixes = list(args.suffix) or [".jpg", ".png", ".json"]
+            for folder in folders:
+                for name in PATH_PARAM_GUESSES:
+                    _reply, paths = ask_files(link, {"suffixs": suffixes, name: folder})
+                    if paths:
+                        print("\n  %s=%r found something. That's the folder parameter." % (name, folder))
+                        break
+        print("\nDone. An empty list every time means it only looks where it wants to.")
+    finally:
+        link.close()
+    return 0
+
+
 def cmd_pixmap(args):
     """Try SEND_PIXMAP: the one lead for updating part of the display instead of all of it."""
     try:
@@ -1599,6 +1655,10 @@ def main():
                    help="also try setVolume's parameter names (changes the device speaker, nothing else)")
     p.add_argument("--force-file-list", action="store_true",
                    help="try getFilesBySuffix even if the method list didn't mention it")
+    p = sub.add_parser("files", help="read-only: ask the device which files it can see")
+    common(p)
+    p.add_argument("--suffix", action="append", help="suffix to ask for (repeatable); default: a sweep")
+    p.add_argument("--path", action="append", help="folder to try passing as well (repeatable)")
     p = sub.add_parser("pixmap", help="experiment: can SEND_PIXMAP update part of the display?")
     common(p)
     p.add_argument("--name", action="append", help="image name to try (repeatable); default: ask GET_THEME")
@@ -1624,7 +1684,7 @@ def main():
     handler = {"selftest": cmd_selftest, "demo": cmd_demo, "list": cmd_list, "probe": cmd_probe,
                "backlight": cmd_backlight, "show-test": cmd_show_test, "storage": cmd_storage,
                "send-test": cmd_send_test, "update": cmd_update, "explore": cmd_explore,
-               "pixmap": cmd_pixmap}[args.cmd]
+               "pixmap": cmd_pixmap, "files": cmd_files}[args.cmd]
     sys.exit(handler(args))
 
 
