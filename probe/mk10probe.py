@@ -19,6 +19,11 @@ Commands
   storage               Read-only: firmware version and free space (older format).
   send-test             Rehearsal: sends two tiny files to /data/mk10probe/ - one with a correct checksum
                         (should be accepted) and one with a wrong checksum (should be refused).
+  upload FILE           Put a file on the device, the way Waveshare's own host code does: 64 KB base64
+                        chunks through saveToFile, then setFileCRC to commit. Defaults to
+                        /data/mk10probe/<name> and asks you to type UPLOAD first. THIS WRITES TO THE DEVICE.
+  delete PATH...        Ask the device to delete files (deleteFiles). Asks you to type DELETE first.
+                        THIS DELETES FROM THE DEVICE, and there is no undo.
   update FILE           Firmware update. FILE is the KeyboardDevice program, or the ScreenKey installer
                         .exe to extract it from. Checks the file, the device and free space, then asks you
                         to type UPDATE before sending anything. Sent to /data/Upgrade/KeyboardDevice; the
@@ -42,6 +47,7 @@ Older format ("V1", little-endian):
 """
 
 import argparse
+import base64
 import collections
 import datetime
 import io
@@ -52,6 +58,7 @@ import struct
 import sys
 import threading
 import time
+import types
 import zlib
 
 MAGIC = b"\xA1\xA5\x5A\x5E"
@@ -86,8 +93,10 @@ DATA_NAMES = {"Cpu使用率": "CPU usage", "Cpu温度": "CPU temperature", "Gpu�
               "Gpu使用率": "GPU usage", "RAM使用率": "RAM usage", "时间": "time", "日期": "date",
               "时": "hour", "分": "minute", "秒": "second"}
 
-# Commands this tool will never send (they change or delete things on the device).
-NEVER_SEND = {"deleteFiles", "saveToFile", "setFileCRC", "keyboardInput"}
+# Methods that change or delete things on the device. Every command here is barred from sending one
+# unless it has unlocked it by name (Link.allow), which only happens after the user has typed the
+# word the command asked for. keyboardInput is never unlocked by anything: it types on the user's PC.
+WRITE_METHODS = {"deleteFiles", "saveToFile", "setFileCRC", "keyboardInput"}
 
 Packet = collections.namedtuple("Packet", "proto seq ptype cmd payload")   # proto "v1"/"v2"
 
@@ -444,6 +453,7 @@ class Link:
         self.ser.rts = dtr
         self.ser.open()
         self.parser = FrameParser()
+        self.unlocked = set()       # write methods this command has been given permission for
         self.log = log
         self.seq = 1
         self.rx_total = 0
@@ -464,9 +474,14 @@ class Link:
         self._write(frame, Packet("v2", seq, None, cmd, payload))
         return seq
 
+    def allow(self, *methods):
+        """Unlock write methods for this connection, once the user has agreed to them by name."""
+        self.unlocked |= set(methods)
+        self.log.note("UNLOCKED %s" % ", ".join(sorted(methods)))
+
     def send_json(self, method, parameters=None):
-        if method in NEVER_SEND:
-            raise ValueError("refusing to send %s from the probe tool" % method)
+        if method in WRITE_METHODS and method not in self.unlocked:
+            raise ValueError("refusing to send %s: this command hasn't unlocked it" % method)
         seq = self.seq
         self.seq += 1
         body = {"method": method, "parameters": parameters or {}, "requestId": seq}
@@ -905,6 +920,54 @@ def send_file(link, device_path, data, crc=None, end_timeout=10.0, progress=Fals
     return d if isinstance(d, dict) else {"error": "unreadable reply: %s" % d}
 
 
+MAX_READ_SIZE = 64 * 1024        # the reference's chunk size, exactly
+PROBE_DIR = "/data/mk10probe/"   # the scratch folder the V1 rehearsal already writes to
+
+
+def upload_v2(link, device_path, data, chunk=MAX_READ_SIZE, progress=True, timeout=15.0):
+    """Waveshare's own upload: base64 chunks through saveToFile, then setFileCRC to commit it.
+
+    The device answers each chunk with result.seek, and the reference reads that to decide where it
+    is. We keep our own offset instead and only check theirs against it, because the two readings of
+    "seek" - the start of the chunk, or the position after it - differ by a whole chunk, and guessing
+    wrong would write the file inside out without either side complaining.
+
+    Returns (ok, what happened).
+    """
+    total = len(data)
+    sent = 0
+    while sent < total:
+        piece = data[sent:sent + chunk]
+        at = sent
+        seq = link.send_json("saveToFile", {"filePath": device_path, "seek": at,
+                                            "data": base64.b64encode(piece).decode("ascii")})
+        pkt = link.wait_for(lambda p: p.proto == "v2" and p.cmd == CMD_JSON
+                            and (p.seq == seq or p.seq == 0xFFFFFFFF), timeout)
+        if pkt is None:
+            return False, "no answer to the chunk at offset %d" % at
+        d = describe(pkt)
+        if not isinstance(d, dict):
+            return False, "the chunk at offset %d got an answer we can't read: %s" % (at, d)
+        if d.get("success") is False:
+            return False, "the device refused the chunk at offset %d: %s" % (
+                at, d.get("errorString") or json.dumps(d))
+        back = (d.get("result") or {}).get("seek")
+        if back is not None and back not in (at, at + len(piece)):
+            print("\n  note: wrote %d bytes at %d and the device answered seek=%s, which is neither end "
+                  "of it. Going by our own count." % (len(piece), at, back))
+        sent += len(piece)
+        if progress:
+            print("\r  %d / %d bytes (%d%%)" % (sent, total, sent * 100 // max(1, total)), end="", flush=True)
+    if progress and total:
+        print()
+    reply = ask_json(link, "setFileCRC", {"filePath": device_path, "crc": str(crc32(data))})
+    if not isinstance(reply, dict):
+        return False, "setFileCRC got no usable answer"
+    if reply.get("success") is False:
+        return False, "setFileCRC was refused: %s" % (reply.get("errorString") or json.dumps(reply))
+    return True, "the device accepted the checksum"
+
+
 def cmd_storage(args):
     link = open_link(args)
     try:
@@ -1312,6 +1375,103 @@ def cmd_files(args):
     return 0
 
 
+def _device_hello(link):
+    """getInfo, so we say what we're about to write to before we write to it."""
+    seq = link.send_json("getInfo")
+    pkt = link.wait_for(lambda p: p.proto == "v2" and p.cmd == CMD_JSON and p.seq == seq, 3.0)
+    result = ((describe(pkt) if pkt else None) or {})
+    result = result.get("result") or {}
+    if result:
+        print("Device:     %s, firmware %s" % (result.get("deviceModel", "?"), result.get("deviceVersion", "?")))
+    else:
+        print("Device:     no answer to getInfo. It may be busy, or speaking the older format only.")
+    return result
+
+
+def _confirm(word, what):
+    answer = input("\nType %s to %s, anything else to stop: " % (word, what))
+    if answer.strip() != word:
+        print("Stopped. Nothing was changed.")
+        return False
+    return True
+
+
+def cmd_upload(args):
+    """Put a file on the device the way Waveshare's own host code does. THIS WRITES TO THE DEVICE."""
+    with open(args.file, "rb") as fh:
+        data = fh.read()
+    dest = args.dest or (PROBE_DIR + os.path.basename(args.file))
+    print("Local file: %s" % args.file)
+    print("            %d bytes, crc32 %d" % (len(data), crc32(data)))
+    print("Goes to:    %s" % dest)
+    if not dest.startswith(PROBE_DIR):
+        print("\n  That is outside %s, the scratch folder we know is safe to write to." % PROBE_DIR)
+        print("  If a file of that name is already there, this replaces it, and nothing here can put it back.")
+    if not data:
+        print("\n  The file is empty, so only setFileCRC gets sent. That is a test of the commit, not an upload.")
+
+    link = open_link(args)
+    try:
+        _device_hello(link)
+        if not args.yes and not _confirm("UPLOAD", "write it"):
+            return 1
+        link.allow("saveToFile", "setFileCRC")
+        print("\nSending in %d-byte chunks." % args.chunk)
+        ok, detail = upload_v2(link, dest, data, chunk=args.chunk)
+        print("\n%s: %s" % ("Accepted" if ok else "Failed", detail))
+        if not ok:
+            print("Nothing is committed unless setFileCRC succeeds, so a half-written file should not exist.\n"
+                  "The log has every packet: %s" % link.log.path)
+            return 1
+
+        suffix = os.path.splitext(dest)[1]
+        if suffix:
+            print("\n---- can the device see it now? ----")
+            # Our notes say the device took ".jpg"; Waveshare's demo passes "wav" with no dot. Ask both ways.
+            _reply, paths = ask_files(link, {"suffixs": [suffix, suffix.lstrip(".")]})
+            listed = [f for f in (paths or []) if isinstance(f, dict) and f.get("filePath") == dest]
+            if listed:
+                same = str(listed[0].get("crc")) == str(crc32(data))
+                print("\n  It lists %s, crc %s - %s ours."
+                      % (dest, listed[0].get("crc"), "the same as" if same else "NOT the same as"))
+            elif paths:
+                print("\n  It lists files of that suffix, but not %s. Either it only looks in its own\n"
+                      "  folders, or the file went somewhere else." % dest)
+            else:
+                print("\n  It lists nothing of that suffix. getFilesBySuffix has always come back empty\n"
+                      "  for us, so this tells us little either way.")
+        else:
+            print("\nNo suffix to ask getFilesBySuffix about, so there's nothing to check it against.")
+        print("\nLog: %s" % link.log.path)
+    finally:
+        link.close()
+    return 0
+
+
+def cmd_delete(args):
+    """deleteFiles, for taking back what upload put there. THIS DELETES FROM THE DEVICE."""
+    paths = list(args.path)
+    print("About to ask the device to delete:")
+    for path in paths:
+        print("    %s" % path)
+    outside = [p for p in paths if not p.startswith(PROBE_DIR)]
+    if outside:
+        print("\n  %d of these are outside %s. The device gives no way to undo this, and a file the\n"
+              "  firmware needs is as deletable as anything else." % (len(outside), PROBE_DIR))
+    link = open_link(args)
+    try:
+        _device_hello(link)
+        if not args.yes and not _confirm("DELETE", "delete them"):
+            return 1
+        link.allow("deleteFiles")
+        reply = ask_json(link, "deleteFiles", {"filePaths": paths})
+        ok = isinstance(reply, dict) and reply.get("success") is not False
+        print("\n%s. Log: %s" % ("The device accepted it" if ok else "The device refused it", link.log.path))
+        return 0 if ok else 1
+    finally:
+        link.close()
+
+
 def cmd_pixmap(args):
     """Try SEND_PIXMAP: the one lead for updating part of the display instead of all of it."""
     try:
@@ -1696,6 +1856,20 @@ def cmd_selftest(_args):
     print("Packet self-test (no device needed)")
     check("CRC-32 matches the standard check value", crc32(b"123456789") == 0xCBF43926)
 
+    # The write guard, without opening a port: Link.send_json only needs .unlocked and .send_frame.
+    gate = types.SimpleNamespace(unlocked=set(), seq=0, send_frame=lambda cmd, payload, seq: seq)
+    def send(method):
+        try:
+            Link.send_json(gate, method, {})
+            return "sent"
+        except ValueError:
+            return "refused"
+    check("a write method is refused until the command unlocks it", send("saveToFile") == "refused")
+    gate.unlocked = {"saveToFile"}
+    check("...and goes out once it has", send("saveToFile") == "sent")
+    check("...one unlock doesn't open the others", send("deleteFiles") == "refused")
+    check("keyboardInput counts as a write method", "keyboardInput" in WRITE_METHODS)
+
     payload = b'{"method":"getInfo","parameters":{}}'
     f = build_frame(7, CMD_JSON, payload)
     expected = (bytes.fromhex("a1a55a5e") + struct.pack("<III", 7, 101, len(payload))
@@ -1809,6 +1983,7 @@ class SimulatedMK10(threading.Thread):
         self.app_path = "/data/KeyboardDevice"
         self.remaining, self.file_path, self.file_buf, self.last_crc = 0, None, bytearray(), 0
         self.files = {}
+        self.partial = {}          # V2 uploads in progress: path -> bytes so far, committed by setFileCRC
         self.installed = None
 
     def reply(self, seq, obj):
@@ -1870,6 +2045,36 @@ class SimulatedMK10(threading.Thread):
             elif m == "setBacklight":
                 self.reply(pkt.seq, {"ack_method": m, "success": True,
                                      "result": {"level": req["parameters"].get("level")}})
+            elif m == "saveToFile":
+                a = req.get("parameters") or {}
+                path, seek = a.get("filePath"), int(a.get("seek") or 0)
+                blob = base64.b64decode(a.get("data") or "")
+                buf = self.partial.setdefault(path, bytearray())
+                if len(buf) < seek:                       # a gap would mean chunks arrived out of order
+                    buf.extend(b"\0" * (seek - len(buf)))
+                buf[seek:seek + len(blob)] = blob
+                # We answer with the position AFTER the chunk. The real device may mean the other end;
+                # upload_v2 accepts either and trusts its own count, which is the point of doing it that way.
+                self.reply(pkt.seq, {"ack_method": m, "success": True, "result": {"seek": seek + len(blob)}})
+            elif m == "setFileCRC":
+                a = req.get("parameters") or {}
+                path, want = a.get("filePath"), str(a.get("crc"))
+                buf = self.partial.pop(path, None)
+                good = buf is not None and str(crc32(bytes(buf))) == want
+                if good:
+                    self.files[path] = want
+                self.reply(pkt.seq, dict({"ack_method": m, "success": good},
+                                         **({} if good else {"errorString": "CRC check failed"})))
+            elif m == "getFilesBySuffix":
+                wanted = (req.get("parameters") or {}).get("suffixs") or []
+                wanted = [w if w.startswith(".") else "." + w for w in wanted if isinstance(w, str)]
+                found = [{"filePath": k, "crc": v} for k, v in sorted(self.files.items())
+                         if any(k.endswith(w) for w in wanted)]
+                self.reply(pkt.seq, {"ack_method": m, "success": True, "result": {"filePaths": found}})
+            elif m == "deleteFiles":
+                gone = [path for path in ((req.get("parameters") or {}).get("filePaths") or [])
+                        if self.files.pop(path, None) is not None]
+                self.reply(pkt.seq, {"ack_method": m, "success": True, "result": {"filePaths": gone}})
             else:
                 self.reply(pkt.seq, {"ack_method": m, "success": False,
                                      "errorString": "Unknown method: %s. Available methods: [%s]"
@@ -1949,6 +2154,15 @@ def cmd_demo(args):
                 show_reply("right-size image", link.wait_for(lambda p: p.seq == seq, on_other=print_event))
             except ImportError:
                 pass
+            print("\nBonus: a file upload against the simulator (three chunks, so the seek handling shows)")
+            link.allow("saveToFile", "setFileCRC", "deleteFiles")   # nothing real is on the other end
+            blob = bytes(range(256)) * 40                      # 10240 bytes
+            ok, detail = upload_v2(link, PROBE_DIR + "demo.bin", blob, chunk=4096)
+            print("  %s: %s" % ("accepted" if ok else "FAILED", detail))
+            ask_files(link, {"suffixs": [".bin"]})
+            print("\n  and taking it back again:")
+            ask_json(link, "deleteFiles", {"filePaths": [PROBE_DIR + "demo.bin"]})
+            ask_files(link, {"suffixs": [".bin"]})
     finally:
         sim.stop.set()
         link.close()
@@ -2013,6 +2227,18 @@ def main():
     p.add_argument("--width", type=int, default=128)
     p.add_argument("--height", type=int, default=128)
     p.add_argument("--pause", type=float, default=1.5, help="seconds between attempts, to watch the screen")
+    p = sub.add_parser("upload", help="put a file on the device with saveToFile (asks before writing)")
+    common(p)
+    p.add_argument("file", help="the local file to send")
+    p.add_argument("--dest", help="path on the device (default: %s<name>)" % PROBE_DIR)
+    p.add_argument("--chunk", type=int, default=MAX_READ_SIZE,
+                   help="bytes per saveToFile call (default %d, the same as Waveshare's own host code)"
+                        % MAX_READ_SIZE)
+    p.add_argument("--yes", action="store_true", help="don't ask first (it writes to the device)")
+    p = sub.add_parser("delete", help="delete files from the device (asks before deleting)")
+    common(p)
+    p.add_argument("path", nargs="+", help="path on the device (repeatable)")
+    p.add_argument("--yes", action="store_true", help="don't ask first (it deletes from the device)")
     p = sub.add_parser("update", help="send a firmware update (asks before changing anything)")
     common(p)
     p.add_argument("file", help="the KeyboardDevice program file, or the ScreenKey installer .exe to extract it from")
@@ -2033,7 +2259,8 @@ def main():
                "backlight": cmd_backlight, "show-test": cmd_show_test, "storage": cmd_storage,
                "send-test": cmd_send_test, "update": cmd_update, "explore": cmd_explore,
                "pixmap": cmd_pixmap, "files": cmd_files, "theme-strings": cmd_theme_strings,
-               "unpack": cmd_unpack, "theme-dig": cmd_theme_dig}[args.cmd]
+               "unpack": cmd_unpack, "theme-dig": cmd_theme_dig,
+               "upload": cmd_upload, "delete": cmd_delete}[args.cmd]
     sys.exit(handler(args))
 
 

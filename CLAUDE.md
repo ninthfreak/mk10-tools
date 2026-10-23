@@ -33,6 +33,10 @@ Read `docs/protocol.md` before touching device code, and `docs/research-notes.md
     installer or the extracted `KeyboardDevice` for the theme format's vocabulary, and `unpack FILE --out DIR`
     lists or extracts archives packed inside the installer, and `theme-dig FILE` hunts for the theme itself as
     plain JSON (the installer keeps some of its payload uncompressed — that is how the firmware is extracted).
+  - `upload FILE [--dest PATH]` puts a file on the device the V2 way (`saveToFile` in 64 KB base64 chunks, then
+    `setFileCRC`), defaulting to `/data/mk10probe/`; `delete PATH...` removes files. **Both write to the device**
+    and ask you to type a word first. The probe refuses any write method until the running command unlocks it by
+    name, so the read-only commands can't write by accident.
 - **What's playing:** `manager/nowplaying-windows.bat` (double-click), `run-windows.bat nowplaying` or
   `./run-linux.sh nowplaying` prints what this PC reports (packages found, track, position, artwork) and
   saves it to `nowplaying-report.txt` in the settings folder. Use it rather than guessing when the Now
@@ -61,6 +65,9 @@ Read `docs/protocol.md` before touching device code, and `docs/research-notes.md
 - Rate **difficulty (x/5)** and **confidence** explicitly. Present recommendations as recommendations, not decisions.
   Keep uncertainty visible.
 - Keep text short and skimmable: short sentences, headers, lists.
+- **Anything you want the user to do goes at the very end, as a numbered list under its own header.**
+  Never inside or before the explanation, and never split across the message. Findings, reasoning and
+  caveats come first; the asks are the last thing they read.
 - **Colours: blue and orange for status and highlights, never red against green.** The app's palette is built
   around this.
 - The user wants GUIs, not config files, and desktop apps rather than local web pages unless there's a strong reason.
