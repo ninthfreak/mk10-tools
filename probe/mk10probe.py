@@ -1292,7 +1292,7 @@ def cmd_files(args):
         folders = list(args.path or [])
         if folders:
             print("\n---- does it take a folder? (the error messages are the point) ----")
-            suffixes = list(args.suffix) or [".jpg", ".png", ".json"]
+            suffixes = list(args.suffix or []) or [".jpg", ".png", ".json"]
             for folder in folders:
                 for name in PATH_PARAM_GUESSES:
                     _reply, paths = ask_files(link, {"suffixs": suffixes, name: folder})
