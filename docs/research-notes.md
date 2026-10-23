@@ -34,6 +34,11 @@ Considered and set aside:
 
 ## Open leads
 
+- **Partial display updates.** V2 has one drawing command and it wants the whole 896×304 canvas, so a moving
+  level meter costs a full JPEG encode, transfer and device-side decode every frame — which is why meters look
+  jerky on real hardware. V1 `SEND_PIXMAP` (cmd 12) carries *named* JPEGs and is the only lead for anything
+  cheaper; `mk10probe.py pixmap` tries it against whatever image names GET_THEME reports. Probably
+  theme-scoped and so useless to us, but it has never actually been sent to a device.
 - **Built-in theme clocks.** The firmware has its own analogue, digital, flip and image-based clocks (see
   `protocol.md`). If one can run on the small screen while the PC sends key pictures, we'd get an on-device clock
   that keeps going without the PC. Needs the SD card's `config.json` (theme format) and experiments with V1
