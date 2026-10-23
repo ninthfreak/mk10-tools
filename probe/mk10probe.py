@@ -1487,6 +1487,101 @@ def safe_member(name):
     return posixpath.normpath(clean).lstrip("./") or None
 
 
+#: Words that would appear inside a theme file but not in ordinary installer padding. The Chinese ones are
+#: "default theme" and "Waveshare", which is how the stock theme folder is named.
+THEME_MARKERS = [b"OriginPoint_ax", b"OriginPoint_ay", b"pageList", b"FlipClock", b"CircularProgressBar",
+                 b"\xe9\xbb\x98\xe8\xae\xa4\xe4\xb8\xbb\xe9\xa2\x98", b"\xe5\xbe\xae\xe9\x9b\xaa"]
+
+
+def json_object_at(blob, start, limit=4 * 1024 * 1024):
+    """Walk a brace-balanced object from `start`, respecting strings and escapes. Returns its end, or None."""
+    if start >= len(blob) or blob[start:start + 1] != b"{":
+        return None
+    depth, i, in_string, escaped = 0, start, False, False
+    stop = min(len(blob), start + limit)
+    while i < stop:
+        c = blob[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif c == 0x5C:                      # backslash
+                escaped = True
+            elif c == 0x22:                      # quote
+                in_string = False
+        elif c == 0x22:
+            in_string = True
+        elif c == 0x7B:                          # {
+            depth += 1
+        elif c == 0x7D:                          # }
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        elif c == 0 or (c < 9 and c != 0):       # a NUL means we've run past the end of a text blob
+            return None
+        i += 1
+    return None
+
+
+def find_theme_json(blob, window=512 * 1024):
+    """Look for JSON objects that mention theme things. Installers often hold their payload uncompressed."""
+    seen, out = set(), []
+    for marker in THEME_MARKERS:
+        for m in __import__("re").finditer(__import__("re").escape(marker), blob):
+            hit = m.start()
+            lo = max(0, hit - window)
+            starts = [i for i in range(hit, lo - 1, -1) if blob[i:i + 1] == b"{"]
+            for start in starts[:400]:
+                end = json_object_at(blob, start)
+                if end is None or end <= hit:            # must actually contain the marker
+                    continue
+                if (start, end) in seen:
+                    break
+                seen.add((start, end))
+                try:
+                    text = blob[start:end].decode("utf-8")
+                    data = __import__("json").loads(text)
+                except (UnicodeDecodeError, ValueError):
+                    continue
+                if isinstance(data, dict) and data:
+                    out.append((start, end, data))
+                break
+    return sorted(out)
+
+
+def cmd_theme_dig(args):
+    """Offline: hunt for the theme file itself inside an installer, as plain JSON."""
+    try:
+        blob = pathlib_read(args.file)
+    except OSError as e:
+        sys.exit("Couldn't read %s: %s" % (args.file, e))
+    print("Searching %d bytes for JSON that mentions theme things..." % len(blob))
+    found = find_theme_json(blob)
+    if not found:
+        print("\nNothing. The payload is probably compressed; 7-Zip opens NSIS and Inno installers:")
+        print("    7z l \"%s\"      (list)" % args.file)
+        print("    7z x \"%s\" -oOUT   (extract)" % args.file)
+        return 1
+    out_root = None
+    if args.out:
+        import pathlib as _p
+        out_root = _p.Path(args.out)
+        out_root.mkdir(parents=True, exist_ok=True)
+    print("\nFound %d JSON object(s):" % len(found))
+    for n, (start, end, data) in enumerate(found, 1):
+        keys = ", ".join(sorted(data)[:12])
+        print("\n== %d  offset %d, %d bytes" % (n, start, end - start))
+        print("   top-level keys: %s" % (keys or "(none)"))
+        preview = __import__("json").dumps(data, ensure_ascii=False)[:400]
+        print("   %s%s" % (preview, "..." if len(preview) == 400 else ""))
+        if out_root is not None:
+            dest = out_root / ("theme-candidate-%d.json" % n)
+            dest.write_text(__import__("json").dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+            print("   saved to %s" % dest)
+    if out_root is None:
+        print("\nPass --out FOLDER to save them.")
+    return 0
+
+
 def cmd_unpack(args):
     """Offline: list, and optionally extract, the archives packed inside a ScreenKey installer."""
     import io
@@ -1858,6 +1953,9 @@ def main():
                                              "for the theme format (no device needed)")
     p.add_argument("file", help="the ScreenKey installer .exe, or an extracted KeyboardDevice")
     p.add_argument("--all", action="store_true", help="print more of each group")
+    p = sub.add_parser("theme-dig", help="offline: hunt for the theme file itself inside an installer")
+    p.add_argument("file", help="the ScreenKey installer .exe")
+    p.add_argument("--out", help="folder to save what it finds")
     p = sub.add_parser("unpack", help="offline: list or extract archives packed inside an installer")
     p.add_argument("file", help="the ScreenKey installer .exe")
     p.add_argument("--out", help="empty folder to extract into")
@@ -1882,7 +1980,7 @@ def main():
         sys.stdout.reconfigure(errors="replace")
     except (AttributeError, ValueError):
         pass
-    if args.cmd not in ("selftest", "theme-strings", "unpack"):
+    if args.cmd not in ("selftest", "theme-strings", "unpack", "theme-dig"):
         try:
             import serial  # noqa: F401
         except ImportError:
@@ -1891,7 +1989,7 @@ def main():
                "backlight": cmd_backlight, "show-test": cmd_show_test, "storage": cmd_storage,
                "send-test": cmd_send_test, "update": cmd_update, "explore": cmd_explore,
                "pixmap": cmd_pixmap, "files": cmd_files, "theme-strings": cmd_theme_strings,
-               "unpack": cmd_unpack}[args.cmd]
+               "unpack": cmd_unpack, "theme-dig": cmd_theme_dig}[args.cmd]
     sys.exit(handler(args))
 
 
