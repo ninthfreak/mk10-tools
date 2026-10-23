@@ -1453,6 +1453,15 @@ def cmd_theme_strings(args):
     else:
         print("Not an installer we recognise and not an ELF; reading it as raw bytes anyway.\n")
     theme_report(prog, args.all)
+    if prog is not blob and len(blob) > len(prog):
+        print("\n---- and now the installer as a whole, for addresses the Windows app uses ----")
+        outer = extract_strings(blob, min_len=12)
+        urls = sorted({t for _o, t in outer if t.startswith(("http://", "https://")) and len(t) > 14})
+        print("== %d url(s) anywhere in the installer" % len(urls))
+        for t in urls[:60]:
+            print("  %s" % t)
+        if len(urls) > 60:
+            print("  ... and %d more" % (len(urls) - 60))
 
     found_zips = embedded_zips(blob)
     if found_zips:
@@ -1500,7 +1509,8 @@ def safe_member(name):
 
 #: Words that would appear inside a theme file but not in ordinary installer padding. The Chinese ones are
 #: "default theme" and "Waveshare", which is how the stock theme folder is named.
-THEME_MARKERS = [b"OriginPoint_ax", b"OriginPoint_ay", b"pageList", b"FlipClock", b"CircularProgressBar",
+THEME_MARKERS = [b"OriginPoint_ax", b"item_offset", b"pageData", b"pageSwitchMode", b"scaledWidthTo",
+                 b"lineargradient_color", b"FlipClock", b"CircularProgressBar",
                  b"\xe9\xbb\x98\xe8\xae\xa4\xe4\xb8\xbb\xe9\xa2\x98", b"\xe5\xbe\xae\xe9\x9b\xaa"]
 
 
