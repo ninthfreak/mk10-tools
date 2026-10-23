@@ -65,6 +65,8 @@ Read `docs/protocol.md` before touching device code, and `docs/research-notes.md
 - Rate **difficulty (x/5)** and **confidence** explicitly. Present recommendations as recommendations, not decisions.
   Keep uncertainty visible.
 - Keep text short and skimmable: short sentences, headers, lists.
+- **Anything you want the user to do goes at the very top, as a numbered list, under its own header.**
+  Never inside or after the explanation. Findings, reasoning and caveats come afterwards.
 - **Colours: blue and orange for status and highlights, never red against green.** The app's palette is built
   around this.
 - The user wants GUIs, not config files, and desktop apps rather than local web pages unless there's a strong reason.
