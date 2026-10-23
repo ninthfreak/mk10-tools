@@ -174,6 +174,7 @@ class WindowsNowPlaying:
 
     def __init__(self):
         self.note = ""
+        self.art_problem = ""        # why the last artwork fetch failed, for the report
         self._loop = None
         self._mod = None
         self._streams = None
@@ -219,10 +220,10 @@ class WindowsNowPlaying:
         artist = getattr(props, "artist", "") or ""
         album = getattr(props, "album_title", "") or ""
         player = getattr(session, "source_app_user_model_id", "") or ""
+        position, length = _timeline(timeline, status == PLAYING)
         return Track(title=title.strip(), artist=artist.strip(), album=album.strip(),
                      player=_tidy_app_id(player), status=status,
-                     position=_seconds(getattr(timeline, "position", None)),
-                     length=_seconds(getattr(timeline, "end_time", None)),
+                     position=position, length=length,
                      art_key="%s|%s|%s" % (title, artist, album),
                      read_at=time.monotonic(), available=True)
 
@@ -231,30 +232,74 @@ class WindowsNowPlaying:
             return b""
         try:
             return self._run(self._art())
-        except Exception:
+        except Exception as e:
+            self.art_problem = str(e)
             return b""
 
     async def _art(self) -> bytes:
         manager = await self._mod.GlobalSystemMediaTransportControlsSessionManager.request_async()
         session = manager.get_current_session()
         if session is None:
-            return b""
+            raise RuntimeError("no session")
         props = await session.try_get_media_properties_async()
         ref = getattr(props, "thumbnail", None)
         if ref is None:
-            return b""
+            raise RuntimeError("this player doesn't offer any artwork")
         stream = await ref.open_read_async()
         size = min(int(getattr(stream, "size", 0) or 0), MAX_ART_BYTES)
         if size <= 0:
-            return b""
+            raise RuntimeError("the artwork stream says it is empty")
         reader = self._streams.DataReader(stream)
         await reader.load_async(size)
-        return bytes(reader.read_bytes(size))
+        tried = []
+        # PyWinRT projects WinRT byte arrays differently depending on version, so try each shape in turn.
+        for name, call in (("read_bytes", lambda: reader.read_bytes(size)),
+                           ("read_buffer", lambda: reader.read_buffer(size))):
+            try:
+                data = bytes(call())
+            except Exception as e:
+                tried.append("%s: %s" % (name, e))
+                continue
+            if data:
+                self.art_problem = ""
+                return data
+            tried.append("%s: came back empty" % name)
+        raise RuntimeError("; ".join(tried))
 
     def close(self):
         if self._loop is not None and not self._loop.is_closed():
             self._loop.close()
         self._loop = None
+
+
+def _timeline(timeline, playing: bool) -> tuple[float, float]:
+    """Where we are in the track, and how long it is.
+
+    SMTC's Position is only refreshed when the player pushes an update, which browsers do rarely — it can
+    sit at 0 for a whole video. LastUpdatedTime says when that snapshot was taken, so add the time since."""
+    start = _seconds(getattr(timeline, "start_time", None))
+    position = max(0.0, _seconds(getattr(timeline, "position", None)) - start)
+    length = max(0.0, _seconds(getattr(timeline, "end_time", None)) - start)
+    if playing:
+        since = _since(getattr(timeline, "last_updated_time", None))
+        if since is not None:
+            position += since
+    return (min(position, length) if length else position), length
+
+
+def _since(stamp) -> float | None:
+    """Seconds since a WinRT DateTimeOffset, or None if it isn't one we can trust."""
+    from datetime import datetime, timezone
+    if stamp is None:
+        return None
+    try:
+        if getattr(stamp, "tzinfo", None) is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        gap = (datetime.now(timezone.utc) - stamp).total_seconds()
+    except Exception:
+        return None
+    # Nonsense (an unset timestamp, or a clock that disagrees) should be ignored, not added on.
+    return gap if 0.0 <= gap < 86400.0 else None
 
 
 def _seconds(value) -> float:
@@ -272,11 +317,17 @@ def _seconds(value) -> float:
 
 
 _APP_ID = re.compile(r"[._]")
+_OPAQUE_ID = re.compile(r"^[0-9A-Fa-f]{8,}$")
 
 
 def _tidy_app_id(app_id: str) -> str:
-    """'Spotify.exe' and 'Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic' -> something readable."""
+    """'Spotify.exe' and 'Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic' -> something readable.
+
+    Browsers register a hash instead of a name ('6CAE146F22A965B0'), which is no use to anyone reading a
+    screen, so that becomes nothing and the player line is simply left out."""
     name = (app_id or "").split("!")[0].strip()
+    if _OPAQUE_ID.match(name):
+        return ""
     if name.lower().endswith(".exe"):
         return name[:-4]
     parts = [p for p in _APP_ID.split(name) if p and not p.endswith("bbwe")]
@@ -307,12 +358,27 @@ def describe_backend(backend=None) -> str:
 
 
 # ---------------------------------------------------------------------------- checking it works
+def _build_id() -> str:
+    """Which commit this copy is, so a report can't be mistaken for one from an older build."""
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    try:
+        r = subprocess.run(["git", "-C", root, "log", "-1", "--format=%h %cd", "--date=short"],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return "unknown (not a git checkout)"
+
+
 def report(reads: int = 3, gap: float = 1.5) -> str:
     """What the system says is playing, in detail. Run this on the machine itself before trusting the face."""
     lines = ["MK10 Manager: what's playing", "=" * 40,
              "System: %s" % sys.platform,
              "Python: %s" % sys.version.split()[0],
-             "Running: %s" % (sys.executable or "?")]
+             "Running: %s" % (sys.executable or "?"),
+             "Build:   %s" % _build_id()]
     if IS_WIN:
         lines.append("")
         lines.append("PyWinRT packages:")
@@ -357,7 +423,8 @@ def report(reads: int = 3, gap: float = 1.5) -> str:
                 kind = "JPEG" if art[:2] == b"\xff\xd8" else "PNG" if art[:8].startswith(b"\x89PNG") else "?"
                 lines.append("  art        %d bytes, looks like %s" % (len(art), kind))
             else:
-                lines.append("  art        nothing came back")
+                why = getattr(backend, "art_problem", "") or "no reason given"
+                lines.append("  art        nothing came back (%s)" % why)
     try:
         backend.close()
     except Exception:
