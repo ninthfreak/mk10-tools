@@ -115,6 +115,33 @@ class CommandServer:
             self.ctl.flash(parts[1], secs)
 
 
+def run_nowplaying_report() -> int:
+    """Print what this PC says is playing — and always save it, because a .pyw start has no console."""
+    from .system.nowplaying import report
+    text = report()
+    path = config_dir() / "nowplaying-report.txt"
+    try:
+        config_dir().mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        where = "\n\nSaved to %s" % path
+    except OSError as e:
+        where = "\n\n(Couldn't save a copy: %s)" % e
+    if sys.stdout is not None:
+        try:
+            print(text + where)
+            return 0
+        except (OSError, ValueError):
+            pass
+    # Started without a console: say where the file is instead of silently doing nothing.
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, text[-1400:] + where, APP_NAME, 0x40)
+        except Exception:
+            pass
+    return 0
+
+
 def setup_logging() -> str:
     folder = config_dir()
     folder.mkdir(parents=True, exist_ok=True)
@@ -148,6 +175,9 @@ def setup_logging() -> str:
 
 def main(argv=None):
     ns = parse_args(sys.argv[1:] if argv is None else argv)
+    if ns.command == "nowplaying":
+        return run_nowplaying_report()      # a local check; it needs no window and no running copy
+
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_NAME)
@@ -160,12 +190,6 @@ def main(argv=None):
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("mk10.manager")
         except Exception:
             pass
-
-    if ns.command == "nowplaying":
-        # A local check, not something to hand to a running copy.
-        from .system.nowplaying import report
-        print(report())
-        return 0
 
     msg = build_message(ns)
     if send_to_running(msg):

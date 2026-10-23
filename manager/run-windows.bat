@@ -12,6 +12,13 @@ if not exist ".venv\installed.ok" (
   ".venv\Scripts\python.exe" -m pip install -r requirements.txt || goto :failed
   echo ok> ".venv\installed.ok"
 )
+rem A command that prints a report needs the Python that has a console.
+if /i "%~1"=="nowplaying" (
+  ".venv\Scripts\python.exe" launch.pyw %*
+  echo.
+  pause
+  exit /b 0
+)
 start "" ".venv\Scripts\pythonw.exe" launch.pyw %*
 exit /b 0
 

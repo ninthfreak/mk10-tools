@@ -309,7 +309,10 @@ def describe_backend(backend=None) -> str:
 # ---------------------------------------------------------------------------- checking it works
 def report(reads: int = 3, gap: float = 1.5) -> str:
     """What the system says is playing, in detail. Run this on the machine itself before trusting the face."""
-    lines = ["MK10 Manager: what's playing", "=" * 40, "System: %s" % sys.platform]
+    lines = ["MK10 Manager: what's playing", "=" * 40,
+             "System: %s" % sys.platform,
+             "Python: %s" % sys.version.split()[0],
+             "Running: %s" % (sys.executable or "?")]
     if IS_WIN:
         lines.append("")
         lines.append("PyWinRT packages:")

@@ -23,17 +23,25 @@ def _fail(text):
     sys.exit(1)
 
 
-def _venv_python():
+# Commands that print a report. They need a real console, so they must not go to pythonw.exe.
+CONSOLE_COMMANDS = {"nowplaying"}
+WANTS_CONSOLE = bool(CONSOLE_COMMANDS.intersection(sys.argv[1:]))
+
+
+def _venv_python(console=False):
     if sys.platform.startswith("win"):
-        exe = os.path.join(HERE, ".venv", "Scripts", "pythonw.exe")
+        exe = os.path.join(HERE, ".venv", "Scripts", "python.exe" if console else "pythonw.exe")
     else:
         exe = os.path.join(HERE, ".venv", "bin", "python")
     return exe if os.path.exists(exe) else None
 
 
 # Double-clicked with the system Python? Hand over to the app's own Python in .venv, which has the requirements.
-venv = _venv_python()
+venv = _venv_python(WANTS_CONSOLE)
 if venv and os.path.normcase(os.path.abspath(sys.prefix)) != os.path.normcase(os.path.join(HERE, ".venv")):
+    if WANTS_CONSOLE:
+        # Stay attached so the report reaches whoever asked for it.
+        sys.exit(subprocess.call([venv, os.path.abspath(__file__)] + sys.argv[1:], cwd=HERE))
     subprocess.Popen([venv, os.path.abspath(__file__)] + sys.argv[1:], cwd=HERE)
     sys.exit(0)
 
