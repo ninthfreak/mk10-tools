@@ -6,10 +6,11 @@ To add a face: subclass Face, give it an id, label and options, implement paint(
 import math
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen, QTextOption
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPen, QTextOption
 
 from ..schema import Field, fill_defaults
 from ..system.audio import INPUT, OUTPUT
+from ..system.nowplaying import format_time as format_track_time
 from . import meters
 from .template import HELP, RenderContext, expand, format_time, uses_seconds
 
@@ -573,6 +574,140 @@ class SlackFace(Face):
         return text + "…"
 
 
+class NowPlayingFace(Face):
+    """Whatever the system says is playing: Spotify, a browser tab, VLC. Artwork if the player gives us any."""
+
+    id = "nowplaying"
+    label = "Now playing"
+    options = [
+        Field("bg", "Background", "color", "#000000"),
+        Field("art", "Show the artwork", "choice", "cover",
+              [("cover", "Fill the screen behind the text"), ("top", "Above the text"), ("none", "Don't show it")]),
+        Field("dim", "Dim the artwork (%)", "int", 65, minimum=0, maximum=100, show_if=("art", ("cover",)),
+              help="Darkens the picture so the words on top of it stay readable."),
+        Field("title_color", "Title colour", "color", LIGHT),
+        Field("title_size", "Title size", "int", 32, minimum=10, maximum=70),
+        Field("artist_color", "Artist colour", "color", BLUE),
+        Field("artist_size", "Artist size", "int", 24, minimum=10, maximum=60),
+        Field("show_progress", "Show how far through", "bool", True),
+        Field("progress_color", "Progress colour", "color", ORANGE),
+        Field("show_player", "Show which player", "bool", True),
+        Field("idle_text", "When nothing is playing", "template", "{time}", help=COMMON_TEXT_HELP),
+        Field("idle_color", "Idle colour", "color", GREY),
+    ]
+
+    def needs_seconds(self, opts):
+        v = self.values(opts)
+        return bool(v["show_progress"]) or uses_seconds(v["idle_text"])
+
+    def paint(self, p, rect, opts, ctx, output=""):
+        v = self.values(opts)
+        p.fillRect(rect, QColor(v["bg"]))
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.TextAntialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        track = getattr(ctx, "now_playing", None)
+        if track is None or not track.available or not track.known:
+            idle = expand(v["idle_text"], ctx, output)
+            if idle:
+                draw_text(p, rect.adjusted(MARGIN, MARGIN, -MARGIN, -MARGIN), idle,
+                          fit_font(ctx, idle, v["title_size"], rect.width() - 2 * MARGIN), v["idle_color"])
+            return
+        inner = rect.adjusted(MARGIN, MARGIN, -MARGIN, -MARGIN)
+        art = QImage.fromData(track.art) if track.art else None
+        if art is not None and art.isNull():
+            art = None
+        area = QRectF(inner)
+        if art is not None and v["art"] == "cover":
+            self._cover(p, rect, art, int(v["dim"]))
+        elif art is not None and v["art"] == "top":
+            side = min(inner.width() * 0.8, inner.height() * 0.45)
+            box = QRectF(inner.center().x() - side / 2, inner.top(), side, side)
+            self._fit(p, box, art)
+            area.setTop(box.bottom() + 8)
+
+        lines = []
+        if v["show_player"] and track.player:
+            lines.append(("player", track.player.upper(), GREY))
+        lines.append(("title", track.title, v["title_color"]))
+        if track.artist:
+            lines.append(("artist", track.artist, v["artist_color"]))
+        bar_h = 6.0 if v["show_progress"] and track.length else 0.0
+        time_h = text_height(make_font(ctx, 18)) if bar_h else 0.0
+        text_area = QRectF(area.left(), area.top(), area.width(), area.height() - bar_h - time_h - 8)
+        self._lines(p, text_area, lines, v, ctx)
+        if bar_h:
+            self._progress(p, QRectF(area.left(), area.bottom() - bar_h - time_h - 2, area.width(), bar_h),
+                           track, v, ctx, time_h)
+
+    def _lines(self, p, area, lines, v, ctx):
+        """Player, title and artist, stacked and centred. Each is shrunk to the width, then the whole
+        stack is made to fit the height — dropping the player name first, since it matters least."""
+        def build(items, scale=1.0):
+            out = []
+            for kind, text, colour in items:
+                if not text:
+                    continue
+                if kind == "player":
+                    out.append((text, make_font(ctx, 16 * scale, True), colour))
+                    continue
+                big = kind == "title"
+                size = (v["title_size"] if big else v["artist_size"]) * scale
+                out.append((text, fit_font(ctx, text, size, area.width(), big, 16 if big else 12), colour))
+            return out
+
+        def height(built):
+            return sum(text_height(f) for _t, f, _c in built) + 4 * max(0, len(built) - 1)
+
+        built = build(lines)
+        if height(built) > area.height() and len(lines) > 1:
+            built = build([line for line in lines if line[0] != "player"])
+        scale = 1.0
+        while height(built) > area.height() and scale > 0.55:
+            scale -= 0.1
+            built = build([line for line in lines if line[0] != "player"], scale)
+        y = area.top() + max(0.0, (area.height() - height(built)) / 2)
+        for text, font, colour in built:
+            h = text_height(font)
+            draw_text(p, QRectF(area.left(), y, area.width(), h), self._clip(text, font, area.width()),
+                      font, colour, Qt.AlignHCenter, wrap=False)
+            y += h + 4
+
+    def _progress(self, p, bar, track, v, ctx, time_h):
+        done = track.position_now()
+        meters.paint_bar(p, bar, (done / track.length) if track.length else 0.0, v["progress_color"],
+                         "#2C2C2A", radius=bar.height() / 2)
+        if not time_h:
+            return
+        f = make_font(ctx, 18)
+        row = QRectF(bar.left(), bar.bottom() + 2, bar.width(), time_h)
+        draw_text(p, row, format_track_time(done), f, GREY, Qt.AlignLeft, wrap=False)
+        draw_text(p, row, format_track_time(track.length), f, GREY, Qt.AlignRight, wrap=False)
+
+    @staticmethod
+    def _cover(p, rect, art, dim):
+        scale = max(rect.width() / art.width(), rect.height() / art.height())
+        sw, sh = rect.width() / scale, rect.height() / scale
+        p.drawImage(rect, art, QRectF((art.width() - sw) / 2, (art.height() - sh) / 2, sw, sh))
+        if dim > 0:
+            p.fillRect(rect, QColor(0, 0, 0, int(255 * max(0, min(100, dim)) / 100.0)))
+
+    @staticmethod
+    def _fit(p, box, art):
+        scale = min(box.width() / art.width(), box.height() / art.height())
+        w, h = art.width() * scale, art.height() * scale
+        p.drawImage(QRectF(box.center().x() - w / 2, box.center().y() - h / 2, w, h), art)
+
+    @staticmethod
+    def _clip(text, font, width):
+        fm = QFontMetricsF(font)
+        if fm.horizontalAdvance(text) <= width:
+            return text
+        while text and fm.horizontalAdvance(text + "…") > width:
+            text = text[:-1]
+        return text + "…"
+
+
 class BlankFace(Face):
     id = "blank"
     label = "Plain colour"
@@ -583,6 +718,6 @@ class BlankFace(Face):
 
 
 def make_faces(icons) -> dict[str, Face]:
-    faces = [AnalogClock(), DigitalClock(), TextFace(), AudioFace(), SlackFace(), ImageFace(icons),
-             BlankFace()]
+    faces = [AnalogClock(), DigitalClock(), TextFace(), AudioFace(), SlackFace(), NowPlayingFace(),
+             ImageFace(icons), BlankFace()]
     return {f.id: f for f in faces}

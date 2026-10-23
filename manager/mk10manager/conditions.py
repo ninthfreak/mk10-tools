@@ -12,6 +12,7 @@ from datetime import datetime
 
 from .schema import Field
 from .system.audio import INPUT, OUTPUT, AudioState
+from .system.nowplaying import Track
 from .system.slack import SlackState
 
 CONDITIONS = [
@@ -25,6 +26,7 @@ CONDITIONS = [
     ("slack_dnd", "Slack notifications"),
     ("slack_presence", "Slack shows me as"),
     ("slack_unread", "Slack unread"),
+    ("playing", "Music or video is"),
 ]
 
 AUDIO_CONDITIONS = ("output_muted", "input_muted")
@@ -39,6 +41,7 @@ CHOICE_CONDITIONS = {
     "slack_dnd": [("yes", "snoozed"), ("no", "not snoozed")],
     "slack_presence": [("away", "away"), ("active", "active")],
     "slack_unread": [("yes", "something unread"), ("no", "all caught up")],
+    "playing": [("yes", "playing"), ("no", "not playing")],
 }
 CONDITION_DEFAULTS = {"when": "app", "value": "", "name": "mode", "from": "09:00", "to": "17:00"}
 
@@ -77,7 +80,7 @@ def wants_muted(value) -> bool:
 
 def matches(cond: dict, app: str = "", title: str = "", variables: dict | None = None,
             now: datetime | None = None, audio: AudioState | None = None,
-            slack: SlackState | None = None) -> bool:
+            slack: SlackState | None = None, track: Track | None = None) -> bool:
     """Is this condition true right now? Unknown kinds, and sound we can't read, are never true."""
     if not cond.get("enabled", True):
         return False
@@ -111,13 +114,17 @@ def matches(cond: dict, app: str = "", title: str = "", variables: dict | None =
         now_true = {"slack_huddle": slack.in_huddle, "slack_dnd": slack.dnd,
                     "slack_unread": slack.unread > 0}[when]
         return now_true == wants_muted(cond.get("value"))      # "yes"/"no", same reading as the mute ones
+    if when == "playing":
+        if track is None or not track.available:
+            return False
+        return track.playing == wants_muted(cond.get("value"))
     return False
 
 
 def matches_in(cond: dict, ctx) -> bool:
     """Same, for anything that carries a RenderContext (keys while they're being drawn)."""
     return matches(cond, ctx.app, ctx.title, ctx.variables, ctx.now, getattr(ctx, "audio", None),
-                   getattr(ctx, "slack", None))
+                   getattr(ctx, "slack", None), getattr(ctx, "now_playing", None))
 
 
 def describe(cond: dict) -> str:
@@ -139,6 +146,8 @@ def describe(cond: dict) -> str:
         lead = {"slack_huddle": "a Slack huddle:", "slack_dnd": "Slack notifications are",
                 "slack_presence": "Slack shows me as", "slack_unread": "Slack has"}[when]
         return "%s %s" % (lead, words)
+    if when == "playing":
+        return "something is %s" % dict(CHOICE_CONDITIONS["playing"]).get(cond.get("value") or "yes", "playing")
     return "?"
 
 

@@ -18,11 +18,11 @@ def new_rule(page_id=None) -> dict:
 
 
 def evaluate(rules: list, app: str, title: str, variables: dict, now: datetime | None = None,
-             audio=None, slack=None):
+             audio=None, slack=None, track=None):
     """Page id of the first matching rule that points at a page, or None."""
     now = now or datetime.now()
     for r in rules:
-        if r.get("page") and matches(r, app, title, variables, now, audio, slack):
+        if r.get("page") and matches(r, app, title, variables, now, audio, slack, track):
             return r["page"]
     return None
 

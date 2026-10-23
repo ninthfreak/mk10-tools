@@ -33,7 +33,7 @@ If it won't start and mentions "xcb", install `libxcb-cursor0` (Debian, Ubuntu) 
 - **Click a key** in the picture to edit it on the right: label, colours, icon, and what it does.
   A key can do several steps in order.
 - **Click the small screen** to choose what it shows: analogue clock, digital clock, text, the sound
-  devices in use, a picture, or a plain colour.
+  devices in use, what's playing, a picture, or a plain colour.
 - **Drag** one key onto another to swap them. **Drop a picture** from your files onto a key.
   **Right-click** a key to copy, paste, clear or test it.
 - **Pages** are at the top. Each page has its own keys and its own small screen.
@@ -75,7 +75,33 @@ nothing), and `{mute:Muted|Live}` for your own two words.
 For Slack: `{slack_huddle}` `{slack_dnd}` `{slack_unread}` `{slack_mentions}` `{slack_presence}`
 `{slack_status}` `{slack_team}` `{slack_user}`, and `{slack_huddle:Busy|Free}` for your own two words.
 
+For what's playing: `{track}` `{artist}` `{album}` `{player}` `{track_time}` `{track_length}`.
+
 A Text face can also run a command every few seconds and show its output with `{output}`.
+
+## Now playing
+
+The **Now playing** small-screen face shows whatever the system says is playing — Spotify, a browser tab,
+VLC — with the album art, title, artist and how far through you are. No per-app setup: it reads the one
+place every player reports into.
+
+- **Windows:** the media controls (SMTC), the same source as the volume flyout's now-playing panel. This
+  needs three Windows-only packages, which `run-windows.bat` installs for you. Without them everything else
+  still works and this screen just stays empty.
+- **Linux:** MPRIS through `playerctl`, which the media keys already use.
+
+**Check it in one command** before you rely on it. In the app's folder:
+
+```
+.venv\Scripts\python launch.pyw nowplaying     (Windows)
+.venv/bin/python launch.pyw nowplaying          (Linux)
+```
+
+That prints exactly what your machine reports — which packages were found, the title, artist, position and
+whether artwork came back — so you can tell at a glance whether it's working.
+
+Switches for it are on the **Device and app** tab. *Album art* is separate because some players hand over a
+web address rather than a file, so fetching it means a small download each time the track changes.
 
 ## Slack
 
@@ -134,7 +160,8 @@ On Windows use the Python inside the app's folder: `.venv\Scripts\python.exe lau
   - KDE Wayland: needs `kdotool`.
   - Hyprland and Sway: work as they are.
   - GNOME Wayland: needs the "Window Calls" extension (untested).
-- **Media keys on Linux** use `playerctl`, plus `wpctl` or `pactl` for volume.
+- **Media keys on Linux** use `playerctl`, plus `wpctl` or `pactl` for volume. `playerctl` is also what
+  reads the track on the Now playing screen.
 - **Reading and changing the sound** uses Windows Core Audio on Windows, and `pactl` on Linux (install
   `pulseaudio-utils`; it works with PipeWire too). The Device and app tab says which one it found.
 - **Live level meters** measure how loud the speakers and microphone are.

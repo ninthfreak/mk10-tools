@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from ..system.audio import INPUT, OUTPUT, AudioState
+from ..system.nowplaying import Track, format_time as format_track_time
 from ..system.slack import SlackState
 
 PLACEHOLDER = re.compile(r"\{([a-zA-Z_]+)(?::([^{}]*))?\}")
@@ -26,7 +27,9 @@ HELP = (
     "{mute:Muted|Live}  your own two words instead\n"
     "{slack_huddle}  {slack_dnd}  {slack_unread}  {slack_mentions}\n"
     "{slack_presence}  {slack_status}  {slack_team}  {slack_user}\n"
-    "{slack_huddle:In a huddle|Free}  your own two words again"
+    "{slack_huddle:In a huddle|Free}  your own two words again\n"
+    "{track}  {artist}  {album}  {player}  what's playing now\n"
+    "{track_time}  {track_length}  how far in, and how long"
 )
 
 
@@ -42,6 +45,7 @@ class RenderContext:
     font_family: str = ""
     audio: AudioState = field(default_factory=AudioState)
     slack: SlackState = field(default_factory=SlackState)
+    now_playing: Track = field(default_factory=Track)
 
 
 def format_time(now: datetime, h24: bool, seconds: bool = False) -> str:
@@ -100,6 +104,8 @@ def expand(text: str, ctx: RenderContext, output: str = "") -> str:
             return on if side.muted else off
         if name.startswith("slack_"):
             return _slack(name, arg, ctx.slack or SlackState())
+        if name in ("track", "artist", "album", "player", "track_time", "track_length", "track_status"):
+            return _now_playing(name, ctx.now_playing or Track())
         return m.group(0)
 
     return PLACEHOLDER.sub(sub, text)
@@ -131,6 +137,26 @@ def _slack(name: str, arg, s: SlackState) -> str:
         return s.team_name or ""
     if name == "slack_user":
         return s.user_name or ""
+    return ""
+
+
+def _now_playing(name: str, t: Track) -> str:
+    if not t.available or not t.known:
+        return ""
+    if name == "track":
+        return t.title
+    if name == "artist":
+        return t.artist
+    if name == "album":
+        return t.album
+    if name == "player":
+        return t.player
+    if name == "track_status":
+        return t.status
+    if name == "track_time":
+        return format_track_time(t.position_now())
+    if name == "track_length":
+        return format_track_time(t.length) if t.length else ""
     return ""
 
 

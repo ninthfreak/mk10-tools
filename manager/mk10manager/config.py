@@ -30,6 +30,8 @@ DEFAULT_SETTINGS = {
     "slack_channels": "",          # conversation ids to count unread messages in
     "slack_unread_source": "channels",
     "slack_poll_seconds": 10,
+    "nowplaying_enabled": True,    # read what the system says is playing
+    "nowplaying_art": True,        # fetch the album art too (a download, for players that give a URL)
 }
 
 
