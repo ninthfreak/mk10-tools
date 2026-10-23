@@ -74,7 +74,19 @@ There is a whole file-transfer path in the JSON protocol, separate from V1's FIL
 
 The reference does **not** push frames on a timer. It sends one `cmd 100`, and when the device acknowledges
 that frame it captures and sends the next. Flow control comes from the device, so the host never runs ahead of
-what the panel can draw. Our own manager uses a fixed rate instead, which is why its meters can look uneven.
+what the panel can draw.
+
+MK10 Manager does the same since the ack-pacing change: `DeviceManager` keeps one picture in flight, and the
+acknowledgement is what releases the next one. The acknowledgement is a packet carrying **the same seq as the
+picture** — on a real V2.32 device it comes back as `cmd 100` with an empty payload. Three useful consequences:
+
+- The device, not a guessed frame rate, decides how fast the canvas updates. The "Updates a second" setting is
+  now only a ceiling.
+- The round trip is the first honest measure of what a redraw costs the device. It's on the Device and app tab
+  next to "Pictures sent"; the old number there was only how long `write()` took on this PC.
+- Firmware that never answers must not go dark, so after `ACK_GIVE_UP` (3) unanswered pictures at
+  `ACK_TIMEOUT` (0.4 s) each, the manager stops expecting answers, says so in the status line, and falls back
+  to sending on the timer.
 
 Two oddities worth copying or at least knowing about:
 

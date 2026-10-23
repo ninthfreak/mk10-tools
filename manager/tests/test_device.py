@@ -101,3 +101,58 @@ def test_manager_connect_keys_frames_and_unplug(qapp, monkeypatch):
     dev.unplug()
     assert wait_until(qapp, lambda: got["disconnected"] is not None, 5)
     m.stop()
+
+
+def _canvas_jpeg() -> bytes:
+    from PySide6.QtCore import QBuffer, QIODevice
+    from PySide6.QtGui import QImage, QColor
+    img = QImage(896, 304, QImage.Format_RGB32)
+    img.fill(QColor(0, 90, 200))
+    buf = QBuffer()
+    buf.open(QIODevice.WriteOnly)
+    img.save(buf, "JPG", 90)
+    return bytes(buf.data())
+
+
+@pytest.mark.parametrize("style", ["jpg", "json"])
+def test_acknowledgements_pace_the_pictures(qapp, monkeypatch, style):
+    """A device that answers gets the next picture as soon as it answers, and times itself in the process."""
+    dev = FakeMK10("v2", ack_style=style)
+    dev.start()
+    monkeypatch.setenv("MK10_PORT", dev.port)
+    m = DeviceManager()
+    m.start()
+    assert wait_until(qapp, lambda: m.is_connected), m.status
+
+    jpg = _canvas_jpeg()
+    for n in range(1, 6):
+        m.show(jpg)
+        assert wait_until(qapp, lambda: len(dev.frames) == n), "stalled after %d" % (n - 1)
+        assert wait_until(qapp, lambda: m.ready_for_frame), "no acknowledgement for picture %d" % n
+    assert m.last_round_trip_ms > 0
+    assert "acknowledge" not in m.status
+    m.stop()
+    dev.unplug()
+
+
+def test_a_silent_device_is_noticed_and_keeps_its_pictures(qapp, monkeypatch):
+    """Firmware that never answers must not go blank: the gate is dropped after a few unanswered pictures."""
+    dev = FakeMK10("v2", ack_style="none")
+    dev.start()
+    monkeypatch.setenv("MK10_PORT", dev.port)
+    m = DeviceManager()
+    m.start()
+    assert wait_until(qapp, lambda: m.is_connected), m.status
+
+    jpg = _canvas_jpeg()
+    m.show(jpg)
+    assert wait_until(qapp, lambda: len(dev.frames) == 1)
+    assert wait_until(qapp, lambda: not m.ready_for_frame), "the first picture should be held open"
+
+    for n in range(2, DeviceManager.ACK_GIVE_UP + 3):
+        m.show(jpg)
+        assert wait_until(qapp, lambda: len(dev.frames) == n, 3), "stopped sending after %d" % (n - 1)
+    assert "acknowledge" in m.status
+    assert m.ready_for_frame, "the gate should be gone once we've stopped expecting answers"
+    m.stop()
+    dev.unplug()

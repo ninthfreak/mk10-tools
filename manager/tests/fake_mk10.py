@@ -26,7 +26,7 @@ def jpeg_size(data: bytes):
 
 
 class FakeMK10(threading.Thread):
-    def __init__(self, mode="v2"):
+    def __init__(self, mode="v2", ack_style="jpg"):
         super().__init__(daemon=True)
         self.master, slave = os.openpty()
         tty.setraw(slave)
@@ -34,6 +34,7 @@ class FakeMK10(threading.Thread):
         self.port = os.ttyname(slave)
         self._slave = slave
         self.mode = mode            # "v2", "old" (V1 only), "silent"
+        self.ack_style = ack_style  # how pictures are acknowledged: "jpg" (like the real device), "json", "none"
         self.parser = FrameParser()
         self.frames: list[bytes] = []
         self.calls: list[dict] = []
@@ -91,7 +92,12 @@ class FakeMK10(threading.Thread):
                     "success": False, "errorString": "Incorrect resolution"}).encode()))
             else:
                 self.frames.append(pkt.payload)
-                self._write(build_frame(pkt.seq, CMD_JSON, json.dumps({"success": True}).encode()))
+                # How a picture gets acknowledged: "json" like older notes assumed, "jpg" like the real
+                # device (it answers with cmd 100 carrying the same id), or "none" to test a silent one.
+                if self.ack_style == "jpg":
+                    self._write(build_frame(pkt.seq, CMD_SHOW_JPG, b""))
+                elif self.ack_style == "json":
+                    self._write(build_frame(pkt.seq, CMD_JSON, json.dumps({"success": True}).encode()))
 
     def run(self):
         while not self.stop_flag.is_set():
