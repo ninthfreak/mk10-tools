@@ -34,15 +34,25 @@ Considered and set aside:
 
 ## Open leads
 
-- **Partial display updates.** V2 has one drawing command and it wants the whole 896×304 canvas, so a moving
-  level meter costs a full JPEG encode, transfer and device-side decode every frame — which is why meters look
-  jerky on real hardware. V1 `SEND_PIXMAP` (cmd 12) carries *named* JPEGs and is the only lead for anything
-  cheaper; `mk10probe.py pixmap` tries it against whatever image names GET_THEME reports. Probably
-  theme-scoped and so useless to us, but it has never actually been sent to a device.
+- **Partial display updates: closed, as far as we can tell.** V2 has one drawing command and it wants the
+  whole 896×304 canvas, so a moving level meter costs a full JPEG encode, transfer and device-side decode
+  every frame — which is why meters look jerky on real hardware.
+  - Asking a real V2.32 device for a method that can't exist makes it list every method it has. The list is
+    exactly the ten already known, and **none of them draws anything**. There is no hidden partial-draw call.
+  - V1 `SEND_PIXMAP` (cmd 12) was sent to the real device under six different image names. Every one was
+    acknowledged with an empty payload and nothing on screen changed. The device had no theme installed
+    (GET_THEME returned only the two storage figures), which fits the theory that it replaces images inside
+    a theme. Retrying with a theme installed is the only way to settle it, and even then it would swap
+    theme images rather than redraw an arbitrary key.
+  - What's left for smoother meters: gentler ballistics (done), and sending fewer bytes per frame — JPEG
+    quality is fixed at 90 in `render/canvas.py`.
 - **Built-in theme clocks.** The firmware has its own analogue, digital, flip and image-based clocks (see
   `protocol.md`). If one can run on the small screen while the PC sends key pictures, we'd get an on-device clock
   that keeps going without the PC. Needs the SD card's `config.json` (theme format) and experiments with V1
   SEND_PIXMAP.
+- **`getFilesBySuffix`.** The real device wants a parameter spelled `suffixs`; every other name answers
+  `Missing 'suffixs' parameter`. The value's shape is still unknown — `explore` now reads the name out of the
+  complaint and retries with a string, a list and a comma-separated list. Read-only, so it is safe to poke.
 - **`keyboardInput`.** If the device can type keystrokes itself, Wayland shortcut problems on Linux disappear. Untested.
 - **Second hand.** A clock with a second hand sends the full 896×304 picture every second. Check for flicker on real
   hardware.

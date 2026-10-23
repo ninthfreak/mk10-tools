@@ -1146,6 +1146,12 @@ def method_list_from_error(text):
     return [n for n in names if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{2,}", n)]
 
 
+def missing_parameter_from_error(text):
+    """'Missing 'suffixs' parameter' -> 'suffixs'. The firmware tells us what it wanted; listen to it."""
+    m = re.search(r"[Mm]issing\s+['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?\s+parameter", str(text or ""))
+    return m.group(1) if m else None
+
+
 def ask_json(link, method, params=None, timeout=3.0):
     seq = link.send_json(method, params or {})
     pkt = link.wait_for(lambda p: p.proto == "v2" and p.cmd == CMD_JSON
@@ -1172,6 +1178,9 @@ def ask_v1(link, cmd, title, fields=None, payload=None, timeout=3.0):
         for k, v in sorted(as_bytes.items()):
             print("    %-28s %d bytes" % (k, len(v)))
         return as_bytes
+    if not pkt.payload:
+        print("  acknowledged, with nothing in the reply.")
+        return {}
     print("  reply payload (%d bytes), not a map we recognise:" % len(pkt.payload))
     print(hexdump(pkt.payload))
     return None
@@ -1212,8 +1221,22 @@ def cmd_explore(args):
 
         if "getFilesBySuffix" in methods or args.force_file_list:
             print("\n---- getFilesBySuffix: guessing its parameters (read-only) ----")
+            wanted = None
             for params in FILE_LIST_GUESSES:
-                ask_json(link, "getFilesBySuffix", params)
+                reply = ask_json(link, "getFilesBySuffix", params)
+                wanted = wanted or missing_parameter_from_error((reply or {}).get("errorString"))
+                if reply and reply.get("success"):
+                    wanted = None
+                    break
+            if wanted:
+                print("\n---- it wants a parameter called %r; trying that in a few shapes ----" % wanted)
+                for value in (".jpg", "jpg", [".jpg", ".png"], ".jpg,.png", ["jpg"], ""):
+                    reply = ask_json(link, "getFilesBySuffix", {wanted: value})
+                    if reply and reply.get("success"):
+                        print("\n  That worked: %s takes %r." % (wanted, value))
+                        break
+                else:
+                    print("\n  None of those shapes satisfied it.")
 
         if args.try_volume:
             print("\n---- setVolume: the parameter name is a guess; this only changes the device speaker ----")
@@ -1345,6 +1368,10 @@ def cmd_selftest(_args):
           method_list_from_error("Unknown method: x. Available methods: [getInfo, setBacklight, playAudio]")
           == ["getInfo", "setBacklight", "playAudio"])
     check("a useless error yields no method names", method_list_from_error("") == [])
+    check("the firmware's complaint names the parameter it wanted",
+          missing_parameter_from_error("Missing 'suffixs' parameter") == "suffixs")
+    check("a complaint about something else names nothing",
+          missing_parameter_from_error("Incorrect resolution") is None)
 
     fake_prog = (b"\x7fELF\x01\x01\x01" + b"\0" * 11 + struct.pack("<H", 40) + b"\0" * 32
                  + b"/lib/ld-linux-armhf.so.3\0" + b"FIXEDCMDHEAD V2.99 V2.99" + b"\0" * 300_000)
