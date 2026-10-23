@@ -40,6 +40,11 @@ CRC is standard CRC-32 (zlib). A reference frame is in `opendeck-plugin/src/prot
 
 ### JSON methods in V2.32
 
+Confirmed on a real MK10 (V2.32) by asking for a method that can't exist — the firmware answers by listing
+every method it has. The list below is complete; there are no undocumented methods, and **nothing that draws
+part of the display**. `mk10probe.py explore` does this.
+
+
 | Method | What it does | Safe to use? |
 |---|---|---|
 | `getInfo` | Model, version, canvas size, layout (the handshake) | Yes |
@@ -47,7 +52,7 @@ CRC is standard CRC-32 (zlib). A reference frame is in `opendeck-plugin/src/prot
 | `setVolume` | `{"level"?: 0-7}` *(unverified parameter name)* | Probably |
 | `playAudio`, `stopAudio` | Device speaker *(unverified parameters)* | Untested |
 | `keyboardInput` | Probably makes the device type keystrokes as a USB keyboard *(unverified)* | Untested |
-| `getFilesBySuffix` | Lists files *(unverified parameters)* | Read-only, untested |
+| `getFilesBySuffix` | Lists files. Wants a parameter spelled **`suffixs`** (confirmed on the real device: anything else answers `Missing 'suffixs' parameter`). The value's shape isn't known yet | Read-only |
 | `saveToFile`, `setFileCRC`, `deleteFiles` | Write or delete files on the device | **No** without a clear reason |
 
 ### getInfo result (V2.32, real device)
@@ -96,16 +101,16 @@ acknowledgement with the same cmd number.
 | 0 | FIND_DEVICE | Reply has `version`, `screen_width`, `screen_height`, `screen_model`, `deviceBl`, `deviceVolume` |
 | 1 | SEND_SYSTEM_DATA | PC stats for themes (CPU, GPU, RAM, time; names are in Chinese in the firmware) |
 | 2 | RELOAD | |
-| 3 | GET_THEME | Theme files, plus `bytesTotal` and `bytesAvailable` in MB |
+| 3 | GET_THEME | Theme files, plus `bytesTotal` and `bytesAvailable` in MB. On a device with no theme installed it returns the two sizes and nothing else (seen: 2648 MB total, 2598 MB free) |
 | 4 | SET_BL | Backlight |
-| 5 | SCAN_STATE | |
+| 5 | SCAN_STATE | Acknowledged with an empty payload on a real V2.32 device |
 | 6 | FILE_START | `{device_path: size}` |
 | 7 | FILE_END | `{device_path: crc32 as decimal}`, reply `{"res": "1" or "0", "fileName": path}` |
 | 8 | GET_VERSION | |
 | 9 | CANVASFLIP | |
 | 10 | SCREENMESSAGE | |
 | 11 | DELETE_THEME | |
-| 12 | SEND_PIXMAP | Named JPEGs, `QMap<QString,QByteArray>`. Possibly updates images inside a theme *(unverified)* |
+| 12 | SEND_PIXMAP | Named JPEGs, `QMap<QString,QByteArray>`. Tried on a real V2.32 device with no theme installed: every name acknowledged with an **empty payload and no visible change**. Looks theme-scoped and useless while the host drives the screen with cmd 100 |
 | 13 | DEVICE_CMD | Device to host: key events on V2.29 (firmware name `ProactiveEscalationCMD`) |
 | 14 | REQUEST_UPLOAD_KEY | |
 | 15 | SEND_JSON | Device to host: the theme asks for live data (`deviceRequestSystemData`) |
