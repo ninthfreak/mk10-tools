@@ -136,7 +136,12 @@ class DeviceManager(QObject):
         self.port: str | None = None
         self.status = "Starting"
         self.frames_sent = 0
-        self.last_frame_ms = 0.0
+        self.last_frame_ms = 0.0          # how long writing the picture to the port took
+        self.last_round_trip_ms = 0.0     # ... and how long until the device said it had drawn it
+        self._awaiting = None             # seq of the picture the device is still working on
+        self._sent_at = 0.0
+        self._acks = True                 # does this device acknowledge pictures? see _session
+        self._misses = 0
 
     # ---- called from the GUI thread
     def start(self):
@@ -161,6 +166,11 @@ class DeviceManager(QObject):
     @property
     def is_connected(self) -> bool:
         return self.layout is not None
+
+    @property
+    def ready_for_frame(self) -> bool:
+        """False while the device is still drawing the last picture, so nobody wastes effort on the next."""
+        return self._awaiting is None
 
     def show(self, jpeg: bytes):
         """Queue a full-canvas JPEG. Only the newest one is sent if several pile up."""
@@ -222,6 +232,7 @@ class DeviceManager(QObject):
                 self._sleep(3)
                 continue
             self.port, self.layout = conn.port, layout
+            self._awaiting, self._misses, self._acks = None, 0, True
             self._set_status("Connected on %s: %s, firmware %s" % (conn.port, layout.model, layout.version or "?"))
             self.connected.emit(layout)
             reason = "stopped"
@@ -240,23 +251,49 @@ class DeviceManager(QObject):
                 self.disconnected.emit(reason)
                 self._sleep(1)
 
+    #: How long to wait for a picture to be acknowledged before assuming it won't be.
+    ACK_TIMEOUT = 0.4
+    #: After this many unanswered pictures, stop waiting for acknowledgements at all.
+    ACK_GIVE_UP = 3
+
     def _session(self, conn: Connection):
+        """One picture is in flight at a time: the device's acknowledgement asks for the next one.
+
+        That is how Waveshare's own host code paces itself, and it lets the device set the rate instead of us
+        guessing at one. A device that never acknowledges (older firmware, say) is noticed after a few tries
+        and the gate is dropped, so it keeps working exactly as it did before.
+        """
         while not self._stop.is_set() and not self._reconnect.is_set():
             for pkt in conn.read():
                 k = key_event(pkt)
                 if k:
                     self.key_event.emit(*k)
                     continue
+                if self._awaiting is not None and pkt.seq == self._awaiting:
+                    # The real device answers a picture with cmd 100; the test double answers with JSON.
+                    self.last_round_trip_ms = (time.perf_counter() - self._sent_at) * 1000
+                    self._awaiting = None
+                    self._misses = 0
+                    self._acks = True
                 d = pkt.json()
                 if d and (pkt.seq == ERROR_SEQ or d.get("success") is False):
                     self.device_error.emit(str(d.get("errorString") or d))
+            if self._awaiting is not None and time.perf_counter() - self._sent_at > self.ACK_TIMEOUT:
+                self._awaiting = None
+                self._misses += 1
+                if self._acks and self._misses >= self.ACK_GIVE_UP:
+                    self._acks = False
+                    self._set_status(self.status + "  (it doesn't acknowledge pictures; sending on a timer)")
             while self._commands:
                 method, params = self._commands.popleft()
                 conn.send_json(method, params)
-            with self._frame_lock:
-                frame, self._frame = self._frame, None
-            if frame is not None:
-                t = time.perf_counter()
-                conn.show_jpeg(frame)
-                self.last_frame_ms = (time.perf_counter() - t) * 1000
-                self.frames_sent += 1
+            if self._awaiting is None:
+                with self._frame_lock:
+                    frame, self._frame = self._frame, None
+                if frame is not None:
+                    t = time.perf_counter()
+                    seq = conn.show_jpeg(frame)
+                    self.last_frame_ms = (time.perf_counter() - t) * 1000
+                    self.frames_sent += 1
+                    if self._acks:
+                        self._awaiting, self._sent_at = seq, time.perf_counter()

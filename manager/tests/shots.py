@@ -73,7 +73,7 @@ win._select("key", 1)
 win.key_editor._add_step("hotkey")
 pump(0.3)
 win.grab().save(os.path.join(out, "3-rules.png"))
-win.bottom.setCurrentIndex(2)
+win.bottom.setCurrentIndex(3)   # Device and app; Slack was added ahead of it
 pump(0.3)
 win.grab().save(os.path.join(out, "4-device.png"))
 

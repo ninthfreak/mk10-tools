@@ -1251,6 +1251,8 @@ def cmd_explore(args):
 
 #: getFilesBySuffix wants {"suffixs": [...]} and answers {"filePaths": [...]}. Confirmed on a real V2.32.
 FILE_SUFFIX_SWEEP = [
+    ["wav", "mp3"],                      # what Waveshare's own demo asks for, with no leading dot
+    ["Theme", "theme"],                  # ... so try the theme suffix that way too
     [".Theme", ".theme", ".THEME"],      # the SD card's config.json points at a .Theme file
     [".jpg", ".jpeg", ".png", ".bmp", ".gif"],
     [".json", ".conf", ".ini", ".txt", ".xml"],
@@ -1269,7 +1271,11 @@ def ask_files(link, params):
     if isinstance(paths, list):
         print("  -> %d file(s)" % len(paths))
         for path in paths[:40]:
-            print("       %s" % path)
+            # Waveshare's own demo shows each entry is {"filePath": ..., "crc": ...}, not a bare string.
+            if isinstance(path, dict):
+                print("       %-50s crc %s" % (path.get("filePath", "?"), path.get("crc", "?")))
+            else:
+                print("       %s" % path)
         if len(paths) > 40:
             print("       ... and %d more" % (len(paths) - 40))
     return reply, paths
@@ -1453,6 +1459,15 @@ def cmd_theme_strings(args):
     else:
         print("Not an installer we recognise and not an ELF; reading it as raw bytes anyway.\n")
     theme_report(prog, args.all)
+    if prog is not blob and len(blob) > len(prog):
+        print("\n---- and now the installer as a whole, for addresses the Windows app uses ----")
+        outer = extract_strings(blob, min_len=12)
+        urls = sorted({t for _o, t in outer if t.startswith(("http://", "https://")) and len(t) > 14})
+        print("== %d url(s) anywhere in the installer" % len(urls))
+        for t in urls[:60]:
+            print("  %s" % t)
+        if len(urls) > 60:
+            print("  ... and %d more" % (len(urls) - 60))
 
     found_zips = embedded_zips(blob)
     if found_zips:
@@ -1500,7 +1515,8 @@ def safe_member(name):
 
 #: Words that would appear inside a theme file but not in ordinary installer padding. The Chinese ones are
 #: "default theme" and "Waveshare", which is how the stock theme folder is named.
-THEME_MARKERS = [b"OriginPoint_ax", b"OriginPoint_ay", b"pageList", b"FlipClock", b"CircularProgressBar",
+THEME_MARKERS = [b"OriginPoint_ax", b"item_offset", b"pageData", b"pageSwitchMode", b"scaledWidthTo",
+                 b"lineargradient_color", b"FlipClock", b"CircularProgressBar",
                  b"\xe9\xbb\x98\xe8\xae\xa4\xe4\xb8\xbb\xe9\xa2\x98", b"\xe5\xbe\xae\xe9\x9b\xaa"]
 
 

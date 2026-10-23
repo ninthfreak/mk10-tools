@@ -212,6 +212,66 @@ sits with them and is the obvious candidate for the name → constructor table a
 Human-readable labels in the same area: "Analog clock", "Digital clocks", "Progress bar", "Clockwise".
 Paths: `/theme`, `/fonts`, `/data/KeyboardInfo`, `/data/DeviceUpgradeFirmware`.
 
+### The theme file's actual keys
+
+With the mangled C++ symbols filtered out, what's left reads like the vocabulary of the file itself:
+
+| Area | Keys |
+|---|---|
+| Structure | `theme`, `defaultTheme`, `pages`, `pageData`, `pageName`, `pageSwitch`, `pageSwitchMode`, `items`, `item_offset`, `layer` |
+| Placement | `pixmap`, `rotate`, `scale`, `scaleType`, `scaledWidthTo`, `scaledHeightTo`, `canvas_rotate`, `OriginPoint_ax`, `OriginPoint_ay`, `isClockwise` |
+| Colour | `area_color`, `back_color`, `front_color`, `border_color`, `grid_line_color`, `series_color`, `lineargradient_color`, `m_color` |
+| Text | `text_font`, `fontMapping` |
+| Progress | `progress`, `progressValue`, `progressText` |
+| Media | `player` |
+
+Signals around it: `onThemeFileSwitchPage`, `themeFileLoadFinish`, `themePageSwitch`.
+
+**`device_state_send_pixmap_to_device`** sits beside `device_state_theme`, `device_state_delete_themes` and
+`device_proactive_theme_load_finish`. So SEND_PIXMAP is a step in ScreenKey's own theme workflow — which
+settles why it acknowledged and did nothing on a device with no theme, and keeps alive the idea that with a
+theme loaded it is how pictures get *into* one.
+
+More classes worth knowing about: `ScreenCapture`, `FrameAnimator`, `AnimationPoint`, `CountdownTimer`,
+`MultimediaViewer`, `QPixmapStore`, `FileSplitter`, `NetworkManager`, `AIManager`, `OperatingSystemControl`,
+and a set of audio visualisers — `audioGuiRoundArc`, `audioGuiRoundPoint`, `audioGuiRoundRect`,
+`audioGuiRectType1`, `audioGuiRoundType1`. Also `STM32CommunicationThread`, though `hardware.md` records the
+keyboard chip as a GD32.
+
+### Why the stock theme can't be had
+
+`theme-dig` over the whole 355 MB installer: the widget names are in there (they are in the firmware's symbol
+table — `FlipClock` 56 times, `CircularProgressBar` 94), but **no JSON object parses around any of them**, and
+the Chinese name of the theme the device is actually running — 默认主题-微雪 — does not appear **even once**.
+
+If the installer shipped that theme, its name would be in it. It isn't. The device's theme was put there at
+the factory, the firmware contains no URLs to fetch one from, and there is no read-file method in the
+protocol. So the stock theme cannot be read by any route available to us.
+
+**Which leaves authoring one from the table above.** Difficulty 4/5, and the first attempt will be wrong in
+ways only the device can reveal — with `DELETE_THEME` (V1 cmd 11) as the way back.
+
+### Waveshare's own host code changes the picture
+
+`OpenSourceLicenseDemo_V1.0` is a small Qt host application Waveshare publish, and it calls every JSON method
+with real parameters. `protocol.md` now records all of them from that source rather than from guesswork. Three
+things follow that matter beyond the table:
+
+- **There is a V2 upload path.** `saveToFile` takes 64 KB base64 chunks at a `seek` offset and the device
+  acknowledges each one; `setFileCRC` commits. That is almost certainly how ScreenKey installs a theme, and it
+  is nothing to do with V1 FILE_START/FILE_END, which is what we had rehearsed.
+- **`cmd 100` is acknowledged, and the official loop is driven by that acknowledgement** — send a frame, wait
+  for the device to say it drew it, send the next. The device sets the pace. Our manager uses a fixed rate
+  instead, which is the likeliest reason its meters look uneven: we are guessing at an interval the device
+  could simply tell us.
+- **`getFilesBySuffix` returns objects**, `{filePath, crc}`, and the demo asks for `"wav"` **without a dot**,
+  listing results as things to hand to `playAudio`. So its search root is probably the sound or upload folder,
+  not anywhere a theme lives — which fits every empty answer we got.
+
+That makes the intended method legible at last: upload files with `saveToFile`/`setFileCRC`, point the SD
+card's `config.json` at the theme, and let the device render it while the host feeds pictures in. Every step
+is now a known call rather than a guess.
+
 ### A new lead: the device does UDP
 
 `handle_udp_connection` is in there, and the board has Wi-Fi the firmware configures. If the device listens on

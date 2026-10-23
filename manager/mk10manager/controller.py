@@ -207,6 +207,8 @@ class Controller(QObject):
                 self._evaluate_rules()
         self._update_live_meters()
         self._run_face_command()
+        if self._live_targets and self.device.is_connected and not self.device.ready_for_frame:
+            return      # the device is still drawing the last picture; composing another would waste it
         if self._dirty or now.second != self._last_second:
             self._last_second = now.second
             self.refresh()
@@ -258,8 +260,9 @@ class Controller(QObject):
         self._live_targets = targets
         self.audio.want_levels(targets)
         if targets:
-            fps = max(1, min(20, int(self.config.settings.get("meter_fps", 6) or 6)))
-            interval = max(50, int(round(1000 / fps)))
+            # A cap, not a promise: the device's acknowledgements decide the rate it actually achieves.
+            fps = max(1, min(30, int(self.config.settings.get("meter_fps", 10) or 10)))
+            interval = max(25, int(round(1000 / fps)))
         else:
             interval = SLOW_TICK_MS
         if self._tick.interval() != interval:

@@ -68,7 +68,9 @@ Read `docs/protocol.md` before touching device code, and `docs/research-notes.md
 
 ## Manager architecture, in one breath
 
-`device/` runs serial I/O on one background thread, handles reconnects, and emits Qt signals.
+`device/` runs serial I/O on one background thread, handles reconnects, and emits Qt signals. It keeps one
+picture in flight: the device's acknowledgement of a frame is what releases the next, so the MK10 sets the
+rate and `meter_fps` is only a ceiling (firmware that never answers is noticed and falls back to a timer).
 `render/` draws the whole canvas with QPainter: keys, then faces from `render/faces.py`, whose option lists drive the
 editor forms through `schema.Field`. `render/meters.py` draws level meters behind keys and on the small screen.
 `system/audio.py` reads and changes the speakers and microphone (Core Audio through ctypes on Windows, `pactl` and

@@ -435,8 +435,10 @@ class DevicePanel(QWidget):
         self.status.setWordWrap(True)
         left.addRow("Status", self.status)
         self.throughput = _muted("")
-        self.throughput.setToolTip("How long the MK10 takes to accept one picture. If that time is close to "
-                                   "the gap between redraws, the device is the limit, not the setting.")
+        self.throughput.setToolTip("How many whole-canvas pictures a second are going out, and how long the "
+                                   "MK10 takes to draw one — measured from sending it to the device saying "
+                                   "it's done. The next picture is sent as soon as that answer arrives, so "
+                                   "the device sets the pace and this time is the real limit.")
         left.addRow("Pictures sent", self.throughput)
         prow = QHBoxLayout()
         self.port = QComboBox()
@@ -476,10 +478,13 @@ class DevicePanel(QWidget):
                                "the small screen. Only runs while a page actually shows one.")
         self.levels.setChecked(bool(s.get("audio_levels", True)))
         self.meter_fps = QSpinBox()
-        self.meter_fps.setRange(1, 20)
+        self.meter_fps.setRange(1, 30)
         self.meter_fps.setValue(int(s.get("meter_fps", 10)))
-        self.meter_fps.setToolTip("How many times a second the whole picture is redrawn and sent to the MK10 "
-                                  "while a live meter is on screen. Lower if the display looks busy.")
+        self.meter_fps.setToolTip("The most redraws a second to attempt while a live meter is on screen. "
+                                  "It's a cap, not a promise: the MK10 acknowledges each picture and the next "
+                                  "goes out then, so the device decides the rate it can really manage. Raise "
+                                  "this to let it go as fast as it can. Remembered, so a new default won't "
+                                  "move it.")
         arow.addWidget(self.levels)
         arow.addWidget(QLabel("Updates a second"))
         arow.addWidget(self.meter_fps)
@@ -569,8 +574,13 @@ class DevicePanel(QWidget):
             return
         gap = now - last_at if last_at else 0.0
         rate = (sent - last_sent) / gap if gap > 0.2 and sent >= last_sent else 0.0
-        each = device.last_frame_ms
-        self.throughput.setText("%.0f a second, %.0f ms each (%d so far)" % (rate, each, sent))
+        round_trip = device.last_round_trip_ms
+        if round_trip:
+            self.throughput.setText("%.0f a second, %.0f ms for the MK10 to draw one (%d so far)"
+                                    % (rate, round_trip, sent))
+        else:
+            self.throughput.setText("%.0f a second, %.1f ms to send each (%d so far)" % (
+                rate, device.last_frame_ms, sent))
 
     def _fill_ports(self):
         cur = self.ctl.config.settings.get("port", "auto")

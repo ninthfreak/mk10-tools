@@ -40,9 +40,62 @@ CRC is standard CRC-32 (zlib). A reference frame is in `opendeck-plugin/src/prot
 
 ### JSON methods in V2.32
 
-Confirmed on a real MK10 (V2.32) by asking for a method that can't exist — the firmware answers by listing
-every method it has. The list below is complete; there are no undocumented methods, and **nothing that draws
-part of the display**. `mk10probe.py explore` does this.
+Confirmed twice over: on a real MK10 by asking for a method that can't exist (the firmware answers by listing
+every method it has — `mk10probe.py explore` does this), and against **Waveshare's own host-side reference
+code**, `OpenSourceLicenseDemo_V1.0`, which calls every one of them. The parameter names below are theirs,
+not guesses. There are no undocumented methods, and **nothing that draws part of the display**.
+
+| Method | Parameters | Reply |
+|---|---|---|
+| `getInfo` | `{}` | `result` with `deviceModel`, `deviceVersion`, `deviceWidth`, `deviceHeight`, `devicePanel` |
+| `setBacklight` | `{"level": int}` | |
+| `setVolume` | `{"level": int}` | the device's own speaker |
+| `playAudio` | `{"filePath": "/data/sound/temp.wav"}` | a path on the device |
+| `stopAudio` | `{}` | |
+| `keyboardInput` | `{"inputString": "Hello! 7895123"}` | the device types it as a USB keyboard |
+| `getFilesBySuffix` | `{"suffixs": ["wav"]}` | `result.filePaths` is an array of **objects**: `{"filePath": ..., "crc": ...}`. Note the demo passes `"wav"` with **no dot** |
+| `saveToFile` | `{"filePath": ..., "seek": int, "data": "<base64>"}` | `result.seek` — see below |
+| `setFileCRC` | `{"filePath": ..., "crc": "<decimal as a string>"}` | ends an upload |
+| `deleteFiles` | `{"filePaths": [...]}` | an array |
+
+### Uploading a file the V2 way
+
+There is a whole file-transfer path in the JSON protocol, separate from V1's FILE_START/FILE_END, and it is
+**acknowledgement-driven**:
+
+1. Read 64 KB from the local file at offset 0. Send `saveToFile` with `seek: 0` and the chunk base64-encoded.
+2. The reply carries `result.seek` — the position just written. Add 64 KB, read the next chunk, send again.
+3. When there is nothing left to read, send `setFileCRC` with the CRC-32 of the whole local file, as a decimal
+   string. That commits it.
+
+`MAX_READ_SIZE` in the reference is exactly `64 * 1024`.
+
+### Pictures are acknowledged, and that is the intended pacing
+
+The reference does **not** push frames on a timer. It sends one `cmd 100`, and when the device acknowledges
+that frame it captures and sends the next. Flow control comes from the device, so the host never runs ahead of
+what the panel can draw.
+
+MK10 Manager does the same since the ack-pacing change: `DeviceManager` keeps one picture in flight, and the
+acknowledgement is what releases the next one. The acknowledgement is a packet carrying **the same seq as the
+picture** — on a real V2.32 device it comes back as `cmd 100` with an empty payload. Three useful consequences:
+
+- The device, not a guessed frame rate, decides how fast the canvas updates. The "Updates a second" setting is
+  now only a ceiling.
+- The round trip is the first honest measure of what a redraw costs the device. It's on the Device and app tab
+  next to "Pictures sent"; the old number there was only how long `write()` took on this PC.
+- Firmware that never answers must not go dark, so after `ACK_GIVE_UP` (3) unanswered pictures at
+  `ACK_TIMEOUT` (0.4 s) each, the manager stops expecting answers, says so in the status line, and falls back
+  to sending on the timer.
+
+Two oddities worth copying or at least knowing about:
+
+- Before the first `getInfo`, the reference writes **1 MB of ASCII `0`** to the port. Most likely it flushes a
+  half-finished file transfer, since the firmware swallows raw bytes while one is in progress.
+- It accepts a second USB id besides `1d6b:0104` — **`1234:5678`**.
+
+The CRC is standard zlib CRC-32 throughout (the table is the usual `0xEDB88320` one, and the streaming helpers
+init to `0xFFFFFFFF` and xor at the end, which comes to the same thing).
 
 
 | Method | What it does | Safe to use? |
@@ -52,7 +105,7 @@ part of the display**. `mk10probe.py explore` does this.
 | `setVolume` | `{"level"?: 0-7}` *(unverified parameter name)* | Probably |
 | `playAudio`, `stopAudio` | Device speaker *(unverified parameters)* | Untested |
 | `keyboardInput` | Probably makes the device type keystrokes as a USB keyboard *(unverified)* | Untested |
-| `getFilesBySuffix` | Lists files. Confirmed on a real V2.32: `{"suffixs": [".jpg", ".png"]}` → `{"filePaths": [...]}`. The name really is spelled `suffixs`, the value **must be an array** (a plain string answers `'suffixs' must be an array`), and anything else answers `Missing 'suffixs' parameter`. It takes **no folder argument** — `path`, `dir`, `directory`, `folder`, `root` and `dirPath` are all accepted and silently ignored — and on a device with no theme it returns an empty list for every suffix, including `[""]` and `[]`. So its search root is fixed and was empty on the device tested | Read-only |
+| `getFilesBySuffix` | Lists files — see the table above for the exact shape. It takes **no folder argument** (`path`, `dir`, `directory`, `folder`, `root`, `dirPath` are all accepted and silently ignored), and on the device tested it returned an empty list for every suffix including `[""]` and `[]`. Waveshare's own demo asks for `"wav"` without a dot and offers the result as things to `playAudio`, so its search root is probably the device's sound or upload folder rather than anywhere a theme lives | Read-only |
 | `saveToFile`, `setFileCRC`, `deleteFiles` | Write or delete files on the device | **No** without a clear reason |
 
 ### getInfo result (V2.32, real device)
