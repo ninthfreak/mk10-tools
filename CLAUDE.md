@@ -10,6 +10,7 @@ Read `docs/protocol.md` before touching device code, and `docs/research-notes.md
 | `manager/` | **MK10 Manager**, the main app: Qt desktop editor + tray, pages, context rules, faces | Python 3.10+, PySide6 |
 | `opendeck-plugin/` | OpenDeck device plugin (works; secondary now) | Rust |
 | `probe/` | `mk10probe.py`: probing, test patterns, file-transfer rehearsal, firmware update | Python |
+| `sdcard/` | `lunch.sh`: Waveshare's own firmware runs this off the SD card **as root at boot**. Read `sdcard/README.md` | sh |
 | `docs/` | Protocol, hardware, research notes | |
 
 ## Running and testing

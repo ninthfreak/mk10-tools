@@ -252,6 +252,42 @@ protocol. So the stock theme cannot be read by any route available to us.
 **Which leaves authoring one from the table above.** Difficulty 4/5, and the first attempt will be wrong in
 ways only the device can reveal — with `DELETE_THEME` (V1 cmd 11) as the way back.
 
+## The firmware image: MK10_V1.0.img
+
+Waveshare's OpenSource package carries `MK10_V1.0.7z` (257 MB) holding `MK10_V1.0.img` (848 MB). It is an
+**Allwinner `IMAGEWTY`** firmware image — so the MK10 is an Allwinner SoC running Tina Linux (OpenWrt), not
+the bare-metal thing the serial protocol suggests. `probe/awimage.py` unpacks it; the index sits at 0x400 in
+1024-byte entries, each `filename_len / header_size / maintype[8] / subtype[16] / pad / filename[256]`, then
+u64 `stored_length`, `original_length`, `offset`.
+
+36 files, of which the ones that matter are `rootfs.fex` (838 MB, plain **ext4**, readable with `debugfs`
+without mounting) and `boot.fex` (Android bootimg).
+
+What it settled:
+
+- **`/data/KeyboardDevice` is stripped.** No `.symtab`, only `.dynsym`. So the demangled signature
+  `theme-strings` found came from RTTI or Qt meta-object data, not a symbol table, and reading the theme
+  parser means working from vtables. I had called that 60/40 the other way; it was the 40.
+- **`/data/theme/` exists and is empty**, with one folder per screen resolution (`480x480`, `800x480`,
+  `1024x600` …, none of them 896x304). Themes really are provisioned after the factory, so this image has no
+  stock theme either. That part of the earlier conclusion holds.
+- **The device is Linux with a shell, busybox, procd, and `adbd` installed** (stopped and disabled at boot).
+
+### The SD card is a root shell, by Waveshare's design
+
+`/etc/init.d/qt_app1` runs **`/mnt/SDCARD/lunch.sh` as root** at every boot, before the UI starts, and copies
+anything in **`/mnt/SDCARD/overlayDir/`** over the root filesystem first. Both are theirs, not a bug we found.
+
+This changes the whole investigation. Everything we wanted from the device — the installed theme, `/data`'s
+real contents, whatever `magic.bin` is — is a file copy away, with no writes to the device over the serial
+protocol and no way to brick it: pull the card and the hook is gone. `sdcard/lunch.sh` in this repo is a
+read-only dump that proves the hook exists and takes the theme off the device.
+
+It also means a theme can be *installed* by copying it into `/data/theme/`, without `saveToFile` at all.
+
+Caveat: the hook is read out of a 2022 image, and the unit runs V2.32. If `mk10dump/when.txt` never appears
+on the card, this firmware doesn't have it, and nothing happened.
+
 ### Waveshare's own host code changes the picture
 
 `OpenSourceLicenseDemo_V1.0` is a small Qt host application Waveshare publish, and it calls every JSON method
