@@ -15,6 +15,7 @@ python mk10probe.py update FILE          # firmware update (asks you to type UPD
 python mk10probe.py explore              # read-only: what methods the firmware has, and what the read ones say
 python mk10probe.py files                # read-only: ask the device which files it can see
 python mk10probe.py theme-strings FILE   # offline: mine the installer or firmware for the theme format
+python mk10probe.py unpack FILE --out D  # offline: list or extract archives packed inside an installer
 python mk10probe.py pixmap               # experiment: can SEND_PIXMAP redraw part of the display?
 python mk10probe.py selftest             # check the packet code, no device needed
 python mk10probe.py demo                 # run against a simulated MK10 (Linux/macOS)

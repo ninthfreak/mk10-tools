@@ -178,6 +178,46 @@ with a public HTTPS endpoint registered in Azure → a relay service you host �
 a cloud service you own and operate, to learn things the sound card can't tell you. Worth knowing the route
 is real and supported; not worth building for ten keys and a small screen.
 
+## What the firmware says a theme is made of
+
+From `mk10probe.py theme-strings` on `KeyboardDevice` V2.32 (pulled out of ScreenKey v1.1). These are class
+and symbol names, so they are what the program *has*, not yet proof of what a `.Theme` file *says*.
+
+**Widgets** — the catalogue a theme can draw from:
+
+| Group | Classes |
+|---|---|
+| Clocks | `FlipClock`, `FlipClocks`, plus `QGraphicsPixmapItemClockMake` (the dial-and-hands clock, with `OriginPoint_ax` / `OriginPoint_ay` pivots, `rotate`, `scale`) |
+| Progress | `RectProgressBar`, `CircularProgressBar`, `CircularProgressBarType1`, `CircularProgressBarType2`, `RectParagraphsProgressBar`, `CircleParagraphsProgressBar` |
+| Text | `CustomTextWidget`, `ShadowTextWidget`, `MultipleLinesTextWidget` |
+| Media | `AudioPlayer`, `VideoPlayer`, `UVideoPlayer`, `CustomImageshow` |
+| Charts | `ChartLineSeries` |
+| Plumbing | `ThemeFile`, `ThemeInfo_s`, `CustomWidgetInterface`, `controlItemWidget` |
+
+Each widget has a matching factory: `QGraphicsPixmapItemMake`, `QGraphicsWidgetBarRectMake`,
+`QGraphicsWidgetBarCircleMake`, `QGraphicsWidgetAudioType1Make`, `QGraphicsWidgetChartLineSeriesMake` and so
+on, alongside `QGraphicsMake`, `QGraphicsDel` and `QGraphicsMake_in_map`. A static called `itemDescription`
+sits with them and is the obvious candidate for the name → constructor table a parser would need.
+
+**Two details worth keeping:**
+
+- `getItemObject<CustomWidgetInterface>(const QMap<int, CustomWidgetInterface*>&, int)` — items are held
+  against an **int**, not a name. So a theme probably numbers its items, and `SEND_PIXMAP`'s string keys may
+  be filenames rather than item ids.
+- `VideoPlayer::updateDynamicImage()`, beside `pixmapToByteArray(QPixmap)`. `VideoPlayer` is the main display
+  class, not just a video widget — it also carries `keyStateChanged`, `updateKeyConfig`, `set_CanvasFlip` and
+  `xiaozhiAICMDUpdate`. `updateDynamicImage` is the most likely place a host-sent picture enters a running
+  theme, which is exactly what SEND_PIXMAP would need.
+
+Human-readable labels in the same area: "Analog clock", "Digital clocks", "Progress bar", "Clockwise".
+Paths: `/theme`, `/fonts`, `/data/KeyboardInfo`, `/data/DeviceUpgradeFirmware`.
+
+### A new lead: the device does UDP
+
+`handle_udp_connection` is in there, and the board has Wi-Fi the firmware configures. If the device listens on
+the network, that is a second control path with none of the serial port's one-program-at-a-time problem.
+Entirely unexplored; nothing here has looked for an open port.
+
 ## Status (October 2026)
 
 | Tool | State |

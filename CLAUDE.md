@@ -30,7 +30,8 @@ Read `docs/protocol.md` before touching device code, and `docs/research-notes.md
     read-only V1 commands. `files` lists what the device can see (`getFilesBySuffix` takes
     `{"suffixs": [".jpg"]}` — an array, and yes it is spelled that way). `pixmap` tests whether SEND_PIXMAP
     can redraw part of the display. `theme-strings FILE` is offline and needs no device: it mines a ScreenKey
-    installer or the extracted `KeyboardDevice` for the theme format's vocabulary.
+    installer or the extracted `KeyboardDevice` for the theme format's vocabulary, and `unpack FILE --out DIR`
+    lists or extracts archives packed inside the installer.
 - **What's playing:** `manager/nowplaying-windows.bat` (double-click), `run-windows.bat nowplaying` or
   `./run-linux.sh nowplaying` prints what this PC reports (packages found, track, position, artwork) and
   saves it to `nowplaying-report.txt` in the settings folder. Use it rather than guessing when the Now
