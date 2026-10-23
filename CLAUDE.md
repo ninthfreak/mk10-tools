@@ -29,7 +29,8 @@ Read `docs/protocol.md` before touching device code, and `docs/research-notes.md
   - `explore` (read-only) lists the firmware's JSON methods by asking for one that can't exist, then runs the
     read-only V1 commands. `files` lists what the device can see (`getFilesBySuffix` takes
     `{"suffixs": [".jpg"]}` — an array, and yes it is spelled that way). `pixmap` tests whether SEND_PIXMAP
-    can redraw part of the display.
+    can redraw part of the display. `theme-strings FILE` is offline and needs no device: it mines a ScreenKey
+    installer or the extracted `KeyboardDevice` for the theme format's vocabulary.
 - **What's playing:** `manager/nowplaying-windows.bat` (double-click), `run-windows.bat nowplaying` or
   `./run-linux.sh nowplaying` prints what this PC reports (packages found, track, position, artwork) and
   saves it to `nowplaying-report.txt` in the settings folder. Use it rather than guessing when the Now
