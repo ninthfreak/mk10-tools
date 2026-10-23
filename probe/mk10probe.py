@@ -1403,6 +1403,17 @@ def theme_report(prog, show_all=False):
 
     print("Program is %d bytes, %d distinct strings." % (len(prog), len(by_text)))
 
+    urls = sorted({t for t in by_text if t.startswith(("http://", "https://", "ftp://")) and len(t) > 12})
+    hosts = sorted({t for t in by_text
+                    if __import__("re").fullmatch(r"[a-z0-9][a-z0-9.-]{4,60}\.(com|cn|net|org|io)", t)})
+    print("\n== Addresses it talks to (%d urls, %d bare hostnames)" % (len(urls), len(hosts)))
+    for t in urls[:40]:
+        print("  %s" % t)
+    for t in hosts[:40]:
+        print("  (host) %s" % t)
+    if not urls and not hosts:
+        print("  (none found)")
+
     paths = sorted(t for t in by_text if t.startswith("/") and len(t) > 6 and " " not in t)
     interesting = [t for t in paths if any(w in t for w in ("theme", "Theme", "SDCARD", "data/", "config"))]
     print("\n== Paths that mention a theme, the card or config (%d)" % len(interesting))
@@ -1522,30 +1533,43 @@ def json_object_at(blob, start, limit=4 * 1024 * 1024):
     return None
 
 
-def find_theme_json(blob, window=512 * 1024):
-    """Look for JSON objects that mention theme things. Installers often hold their payload uncompressed."""
-    seen, out = set(), []
+def find_theme_json(blob, window=512 * 1024, tries=60, verbose=False):
+    """Look for JSON objects that mention theme things. Installers often hold their payload uncompressed.
+
+    Walks back from each marker to the nearest '{' and tries to parse a balanced object from there, then the
+    one before that, and so on. rfind does the scanning, because a byte-at-a-time loop over 350 MB is hopeless.
+    """
+    import json as _json
+    seen, out, counts = set(), [], {}
     for marker in THEME_MARKERS:
-        for m in __import__("re").finditer(__import__("re").escape(marker), blob):
-            hit = m.start()
-            lo = max(0, hit - window)
-            starts = [i for i in range(hit, lo - 1, -1) if blob[i:i + 1] == b"{"]
-            for start in starts[:400]:
-                end = json_object_at(blob, start)
-                if end is None or end <= hit:            # must actually contain the marker
-                    continue
-                if (start, end) in seen:
+        hits = 0
+        pos = blob.find(marker)
+        while pos >= 0:
+            hits += 1
+            lo = max(0, pos - window)
+            start = blob.rfind(b"{", lo, pos + 1)
+            for _ in range(tries):
+                if start < 0:
                     break
-                seen.add((start, end))
-                try:
-                    text = blob[start:end].decode("utf-8")
-                    data = __import__("json").loads(text)
-                except (UnicodeDecodeError, ValueError):
-                    continue
-                if isinstance(data, dict) and data:
-                    out.append((start, end, data))
+                end = json_object_at(blob, start)
+                if end is not None and end > pos and (start, end) not in seen:
+                    seen.add((start, end))
+                    try:
+                        data = _json.loads(blob[start:end].decode("utf-8"))
+                    except (UnicodeDecodeError, ValueError):
+                        data = None
+                    if isinstance(data, dict) and data:
+                        out.append((start, end, data))
+                        break
+                start = blob.rfind(b"{", lo, start)
+            pos = blob.find(marker, pos + 1)
+            if hits >= 4000:                    # a marker in the firmware's symbol table repeats endlessly
                 break
-    return sorted(out)
+        counts[marker] = hits
+        if verbose:
+            name = marker.decode("utf-8", "replace")
+            print("  %-24s %d hit(s)" % (name, hits))
+    return sorted(out), counts
 
 
 def cmd_theme_dig(args):
@@ -1554,12 +1578,16 @@ def cmd_theme_dig(args):
         blob = pathlib_read(args.file)
     except OSError as e:
         sys.exit("Couldn't read %s: %s" % (args.file, e))
-    print("Searching %d bytes for JSON that mentions theme things..." % len(blob))
-    found = find_theme_json(blob)
+    print("Searching %d bytes for JSON that mentions theme things." % len(blob))
+    print("On a few hundred MB this takes a minute or two.\n")
+    found, counts = find_theme_json(blob, verbose=True)
+    dot_theme = blob.count(b".Theme") + blob.count(b".theme")
+    print("\n  %-24s %d hit(s)" % ("the text '.Theme'", dot_theme))
     if not found:
-        print("\nNothing. The payload is probably compressed; 7-Zip opens NSIS and Inno installers:")
-        print("    7z l \"%s\"      (list)" % args.file)
-        print("    7z x \"%s\" -oOUT   (extract)" % args.file)
+        print("\nMarkers were there but no JSON object parsed around any of them."
+              if any(counts.values()) else "\nNone of the theme markers appear in that file at all.")
+        print("That usually means the theme is packed rather than stored as text. This installer is wrapped")
+        print("with Enigma (see its .enigma1/.enigma2 sections), which 7-Zip cannot open either.")
         return 1
     out_root = None
     if args.out:
