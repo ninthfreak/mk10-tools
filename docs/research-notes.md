@@ -64,11 +64,19 @@ Everything theme-shaped on this device is inert, and all of it points the same w
 The SD card's `config.json` turned out to be a pointer, not a theme: themes sit on internal flash at
 `/data/theme/MK10/<folder>/<name>.Theme` (see `hardware.md`). So:
 
-- `getFilesBySuffix` was never asked for `.Theme`, which is the one suffix that might match something. That is
-  the next thing to try, and it costs nothing.
+- `getFilesBySuffix` returns nothing for `.Theme` either, so it finds nothing whatever it is asked. Together
+  with `saveToFile`, `setFileCRC` and `deleteFiles` it reads as a file-management API for content the *host*
+  uploads, searching one fixed upload folder that nothing has ever been put in. The device cannot be made to
+  list the theme it is actually running.
 - Reading the stock theme is the real blocker — the format can't be designed against without it, and there is
   no read-file method in the protocol. The file is on flash, not the card, so pulling the card doesn't get it.
-  Waveshare's ScreenKey installer is the likeliest source of a copy.
+  Two offline ways at it, neither of which touches the device:
+  - **Waveshare's ScreenKey installer** may carry a copy. `mk10probe.py theme-strings` reports any zip-like
+    blobs inside it; 7-Zip opens most installers.
+  - **The firmware contains the parser**, so its strings are the vocabulary a `.Theme` file is written in.
+    `mk10probe.py theme-strings` pulls the paths, the theme words, the ones shaped like JSON keys and the Qt
+    classes out of `KeyboardDevice` (extracting it from the installer first if needed). Enough of that may be
+    sufficient to author a theme without ever seeing one.
 - If `defaultTheme` accepts an SD-card path, a theme could be installed by writing to the card alone, with no
   file transfer to the device. That would make the whole experiment risk-free. Untested.
 - **Built-in theme clocks.** The firmware has its own analogue, digital, flip and image-based clocks (see
