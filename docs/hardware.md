@@ -31,8 +31,22 @@ Pressing a key also makes the QMK chip send its own keystrokes, whatever any PC 
 
 ## SD card
 
-The SD card holds **data only**: `config.json` (themes), `mk10.bin` (240×296 boot splash, RGB565 little-endian),
+The SD card holds **data only**: `config.json`, `mk10.bin` (240×296 boot splash, RGB565 little-endian),
 `log.txt`, `mk20-plus.bin`, and an empty `overlayDir`.
+
+`config.json` is a short pointer file, **not** the theme itself:
+
+```json
+{"defaultTheme": "/data/theme/MK10/<theme folder>/<theme>.Theme",
+ "deviceBl": 30, "deviceVolume": 7, "enableXIAOZHIAI": true}
+```
+
+- **Themes live on internal flash** under `/data/theme/MK10/<folder>/<name>.Theme`, one folder per theme, and
+  the card only says which one to load. The stock entry is Waveshare's own dated default theme.
+- `deviceBl` and `deviceVolume` are the same values FIND_DEVICE reports back.
+- `enableXIAOZHIAI` switches on XiaoZhi, the voice assistant this device is sold around. Nothing here uses it.
+- **Open question:** whether `defaultTheme` will accept a path on the SD card. If it does, a theme can be
+  installed by writing to the card alone, with no file transfer to the device at all.
 
 - The operating system is on internal flash, so copying the SD card is **not** a firmware backup.
 - `magic.bin` holds a key and IDs that look like device identity or activation data. **Never publish it.**
