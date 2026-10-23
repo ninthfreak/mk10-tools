@@ -90,15 +90,12 @@ place every player reports into.
   still works and this screen just stays empty.
 - **Linux:** MPRIS through `playerctl`, which the media keys already use.
 
-**Check it in one command** before you rely on it. In the app's folder:
+**Check it before you rely on it.** On Windows, double-click **`nowplaying-windows.bat`** (or run
+`run-windows.bat nowplaying`). On Linux, run `./run-linux.sh nowplaying`.
 
-```
-.venv\Scripts\python launch.pyw nowplaying     (Windows)
-.venv/bin/python launch.pyw nowplaying          (Linux)
-```
-
-That prints exactly what your machine reports — which packages were found, the title, artist, position and
-whether artwork came back — so you can tell at a glance whether it's working.
+It prints exactly what your machine reports — which packages were found, the title, artist, position and
+whether artwork came back — and always saves the same thing to **`nowplaying-report.txt`** in the settings
+folder, so the answer isn't lost even when it's started without a console.
 
 Switches for it are on the **Device and app** tab. *Album art* is separate because some players hand over a
 web address rather than a file, so fetching it means a small download each time the track changes.

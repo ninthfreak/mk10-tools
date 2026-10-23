@@ -26,8 +26,12 @@ Read `docs/protocol.md` before touching device code, and `docs/research-notes.md
   - `cd opendeck-plugin && cargo test && cargo build --release`.
   - End-to-end: `python tests/fake_opendeck.py target/release/opendeck-mk10` (needs `websockets` and `Pillow`).
 - **Probe:** `python probe/mk10probe.py selftest` (no device), `demo` (simulated device), `probe --port COM6`.
-- **What's playing:** `python manager/launch.pyw nowplaying` prints what this PC reports (packages found,
-  track, position, artwork). Use it rather than guessing when the Now playing screen looks wrong.
+- **What's playing:** `manager/nowplaying-windows.bat` (double-click), `run-windows.bat nowplaying` or
+  `./run-linux.sh nowplaying` prints what this PC reports (packages found, track, position, artwork) and
+  saves it to `nowplaying-report.txt` in the settings folder. Use it rather than guessing when the Now
+  playing screen looks wrong.
+  - `launch.pyw` hands over to **pythonw.exe** on Windows, which has no console, so anything that prints
+    must be listed in its `CONSOLE_COMMANDS` or its output goes nowhere.
 
 ## Hardware safety rules
 
