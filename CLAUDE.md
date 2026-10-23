@@ -27,10 +27,10 @@ Read `docs/protocol.md` before touching device code, and `docs/research-notes.md
   - End-to-end: `python tests/fake_opendeck.py target/release/opendeck-mk10` (needs `websockets` and `Pillow`).
 - **Probe:** `python probe/mk10probe.py selftest` (no device), `demo` (simulated device), `probe --port COM6`.
   - `explore` (read-only) lists the firmware's JSON methods by asking for one that can't exist, then runs the
-    read-only V1 commands. `files` lists what the device can see (`getFilesBySuffix` takes
-    `{"suffixs": ["jpg"]}` — an array, yes it is spelled that way, and the suffix is probably **bare**: every
-    sweep we ran with a leading dot came back empty, and Waveshare's demo never uses one. `files` now proves
-    it either way before sweeping). `pixmap` tests whether SEND_PIXMAP
+    read-only V1 commands. `files` lists **what this host has uploaded**, not the device's own files
+    (`getFilesBySuffix` takes `{"suffixs": ["jpg"]}` — an array, yes it is spelled that way, and the suffix
+    must be **bare**: a leading dot is never stripped and matches nothing, which is why years of sweeps came
+    back empty. `[]` means no filter. The `crc` it returns is the one we declared in `setFileCRC`.) `pixmap` tests whether SEND_PIXMAP
     can redraw part of the display. `theme-strings FILE` is offline and needs no device: it mines a ScreenKey
     installer or the extracted `KeyboardDevice` for the theme format's vocabulary, and `unpack FILE --out DIR`
     lists or extracts archives packed inside the installer, and `theme-dig FILE` hunts for the theme itself as

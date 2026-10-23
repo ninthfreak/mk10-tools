@@ -64,7 +64,8 @@ Everything theme-shaped on this device is inert, and all of it points the same w
 The SD card's `config.json` turned out to be a pointer, not a theme: themes sit on internal flash at
 `/data/theme/MK10/<folder>/<name>.Theme` (see `hardware.md`). So:
 
-- `getFilesBySuffix` returns nothing for `.Theme` either, so it finds nothing whatever it is asked. Together
+- `getFilesBySuffix` returns nothing for `.Theme` either, so it finds nothing whatever it is asked. (Two
+  reasons, found later: the leading dot is never stripped, and it only lists host uploads. See above.) Together
   with `saveToFile`, `setFileCRC` and `deleteFiles` it reads as a file-management API for content the *host*
   uploads, searching one fixed upload folder that nothing has ever been put in. The device cannot be made to
   list the theme it is actually running.
@@ -296,10 +297,39 @@ Every sweep we have ever run used a leading dot, and every one came back empty. 
 mistake, not the device being coy**. `files` now tests both forms against each other before sweeping, and the
 sweep lists are bare.
 
-If that holds, `getFilesBySuffix` becomes a way to enumerate the device's filesystem by extension — which is
-the cheapest route to finding where a theme actually lives, and makes step 2 of theme mode a lot less blind.
-It is **not confirmed**: the other reading is that the listing only knows about files touched in the same
-session, which the first run would also explain. One sweep from a fresh connection separates the two.
+Confirmed from a fresh connection, so it is not a per-session cache: `jpg` found it, `.jpg` found nothing.
+
+### What `getFilesBySuffix` actually lists
+
+The same sweep answered the bigger question, and the answer is not the hoped-for one.
+
+| Asked | Got |
+|---|---|
+| `["jpg"]` | our uploaded `/data/mk10probe/OIP.jpg` |
+| `[".jpg"]` | nothing — the dot is never stripped |
+| `[""]` | nothing — an empty string is a suffix that matches no file |
+| `[]` | **our uploaded file, and only that** |
+
+An empty list means *no filter*, so that last row is the device showing everything it is willing to show.
+It is one file: the one we uploaded. Not `/data/KeyboardDevice`, which certainly exists. Not
+`/data/mk10probe/test-ok.txt` from the V1 rehearsal, which was written through FILE_START/FILE_END rather
+than `saveToFile`. And `/data/mk10probe/` is a folder name **we invented**, so the firmware cannot be
+special-casing it.
+
+So `getFilesBySuffix` is **a registry of what the host has uploaded through `saveToFile`/`setFileCRC`**, not
+a view of the filesystem. The `crc` it reports back is the one we declared in `setFileCRC` — the device is
+repeating what it was told, not checksumming a file it found. That is exactly the API an installer wants:
+*have I already sent this, and does it still match?* so it can skip files that are already there.
+
+Two consequences:
+
+- **It will never show us the stock theme, or anything else the device shipped with.** Every empty answer we
+  collected was correct and meant "you have uploaded nothing", on top of the dot bug. Enumerating the device
+  to find the theme is a dead end, and this closes it rather than opening it.
+- **It is the right tool for the other direction.** Put a theme there and this is how we confirm it landed.
+
+One test would separate "registry of uploads" from "a folder scan rooted somewhere above /data/mk10probe":
+upload a marker into a different folder and see whether it is listed. Registry says yes.
 
 Those three answers are what stand between us and trying a theme.
 

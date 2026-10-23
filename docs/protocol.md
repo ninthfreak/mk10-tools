@@ -53,7 +53,7 @@ not guesses. There are no undocumented methods, and **nothing that draws part of
 | `playAudio` | `{"filePath": "/data/sound/temp.wav"}` | a path on the device |
 | `stopAudio` | `{}` | |
 | `keyboardInput` | `{"inputString": "Hello! 7895123"}` | the device types it as a USB keyboard |
-| `getFilesBySuffix` | `{"suffixs": ["wav"]}` | `result.filePaths` is an array of **objects**: `{"filePath": ..., "crc": ...}`. Note the demo passes `"wav"` with **no dot** |
+| `getFilesBySuffix` | `{"suffixs": ["wav"]}` | `result.filePaths` is an array of **objects**: `{"filePath": ..., "crc": ...}`. The suffix must be **bare**: a leading dot is never stripped and matches nothing. `[]` means no filter. It lists only what *this host* uploaded with `saveToFile`, with the CRC the host declared — not the device's own files |
 | `saveToFile` | `{"filePath": ..., "seek": int, "data": "<base64>"}` | `result.seek` — see below |
 | `setFileCRC` | `{"filePath": ..., "crc": "<decimal as a string>"}` | ends an upload |
 | `deleteFiles` | `{"filePaths": [...]}` | an array |
