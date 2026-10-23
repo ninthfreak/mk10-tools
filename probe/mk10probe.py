@@ -1270,9 +1270,10 @@ def cmd_explore(args):
             print("\n== Methods this firmware admits to")
             for name in sorted(methods):
                 mark = "  (we use it)" if name in ("getInfo", "setBacklight") else ""
-                mark = "  (NEVER sent from here)" if name in NEVER_SEND else mark
+                mark = "  (writes; only upload/delete send it, after you agree)" if name in WRITE_METHODS \
+                    else mark
                 print("  %-24s%s" % (name, mark))
-            unknown = [m for m in methods if m not in NEVER_SEND
+            unknown = [m for m in methods if m not in WRITE_METHODS
                        and m not in ("getInfo", "setBacklight", "keyStateChanged")]
             print("\n  Not understood yet: %s" % (", ".join(sorted(unknown)) or "(none)"))
         else:
@@ -1313,14 +1314,17 @@ def cmd_explore(args):
 
 
 #: getFilesBySuffix wants {"suffixs": [...]} and answers {"filePaths": [...]}. Confirmed on a real V2.32.
+#: Bare, with no leading dot. Waveshare's own demo passes "wav" that way, and every sweep we ran with a dot
+#: came back empty, so the dot is the prime suspect for all those empty answers. cmd_files tests the two
+#: forms against each other before sweeping.
 FILE_SUFFIX_SWEEP = [
-    ["wav", "mp3"],                      # what Waveshare's own demo asks for, with no leading dot
-    ["Theme", "theme"],                  # ... so try the theme suffix that way too
-    [".Theme", ".theme", ".THEME"],      # the SD card's config.json points at a .Theme file
-    [".jpg", ".jpeg", ".png", ".bmp", ".gif"],
-    [".json", ".conf", ".ini", ".txt", ".xml"],
-    [".bin", ".dat", ".so", ".ttf", ".zip"],
-    ["jpg", "png", "json"],              # without the dot, in case matching differs
+    ["jpg", "jpeg", "png", "bmp", "gif", "svg", "webp"],
+    ["json", "conf", "cfg", "ini", "txt", "xml"],
+    ["Theme", "theme", "skin", "layout", "qml", "ui"],
+    ["wav", "mp3", "ogg", "mp4"],
+    ["ttf", "otf", "fon"],
+    ["bin", "dat", "so", "db", "sqlite", "zip", "tar", "gz"],
+    ["sh", "lua", "js", "css", "html", "log"],
     [""],                                # an empty suffix might mean everything
     [],                                  # ... and so might an empty list
 ]
@@ -1344,6 +1348,26 @@ def ask_files(link, params):
     return reply, paths
 
 
+def dot_test(link, bare):
+    """Ask for one suffix both ways. Our sweeps always used a dot; the vendor's demo never does."""
+    print("\n---- does the leading dot matter? ----")
+    print("  Waveshare's demo asks for \"wav\"; we have always asked for \".wav\". If that is the whole")
+    print("  reason this call kept coming back empty, these two answers will differ.")
+    _r, without = ask_files(link, {"suffixs": [bare]})
+    _r, dotted = ask_files(link, {"suffixs": ["." + bare]})
+    n_without, n_dotted = len(without or []), len(dotted or [])
+    if n_without and not n_dotted:
+        print("\n  >> The dot was the bug. %r found %d file(s), %r found none." % (bare, n_without, "." + bare))
+    elif n_dotted and not n_without:
+        print("\n  >> The other way round: it wants the dot. %r found %d, %r none."
+              % ("." + bare, n_dotted, bare))
+    elif n_dotted and n_without:
+        print("\n  >> Both forms work (%d and %d). The dot was never the problem." % (n_without, n_dotted))
+    else:
+        print("\n  >> Neither form found a %s, so this settles nothing. Try a suffix you know is there." % bare)
+    return n_without, n_dotted
+
+
 def cmd_files(args):
     """Read-only: ask the device what files it can see, now that we know how to ask."""
     link = open_link(args)
@@ -1355,6 +1379,7 @@ def cmd_files(args):
         if args.suffix:
             ask_files(link, {"suffixs": list(args.suffix)})
         else:
+            dot_test(link, (args.dot_test or "jpg").lstrip("."))
             print("\n---- what does it find, by suffix? ----")
             for group in FILE_SUFFIX_SWEEP:
                 ask_files(link, {"suffixs": group})
@@ -2220,6 +2245,9 @@ def main():
     p = sub.add_parser("files", help="read-only: ask the device which files it can see")
     common(p)
     p.add_argument("--suffix", action="append", help="suffix to ask for (repeatable); default: a sweep")
+    p.add_argument("--dot-test", default="jpg",
+                   help="suffix to compare with and without a leading dot (default: jpg, which "
+                        "'upload' leaves one of in /data/mk10probe/)")
     p.add_argument("--path", action="append", help="folder to try passing as well (repeatable)")
     p = sub.add_parser("pixmap", help="experiment: can SEND_PIXMAP update part of the display?")
     common(p)
