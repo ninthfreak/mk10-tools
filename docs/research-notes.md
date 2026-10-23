@@ -277,15 +277,29 @@ That makes the intended method legible at last: upload files with `saveToFile`/`
 card's `config.json` at the theme, and let the device render it while the host feeds pictures in. Every step
 is now a known call rather than a guess.
 
-**The upload half is built** (`mk10probe.py upload` / `delete`) and exercised against the simulator. What it
-has not done yet is touch a real device, and these are the questions only a real one can answer:
+### The V2 upload works, and the file listing was our own bug
 
-1. Does `saveToFile` create the folder, or must `/data/mk10probe/` already exist? The V1 rehearsal has written
-   there, so on this unit it probably does.
-2. Does `getFilesBySuffix` list a file we just put there? Every answer so far has been empty, which may mean
-   it only searches its own folders — in which case the reply tells us *where* those are by elimination.
-3. Which `result.seek` convention does the firmware use? The upload doesn't depend on the answer, but it
-   prints anything unexpected, and it would settle how the reference is meant to be read.
+`mk10probe.py upload` put a 1671-byte JPEG on a real MK10 (V2.32) at `/data/mk10probe/OIP.jpg`. `setFileCRC`
+accepted it and echoed `{"crc": ..., "filePath": ...}`. No folder had to be created first — though the V1
+rehearsal has written there before, so this does not prove `saveToFile` would create one.
+
+Then the interesting part. Immediately after the upload, asking with **`["jpg", ".jpg"]`** listed the file:
+
+```
+getFilesBySuffix {"suffixs":[".jpg","jpg"]}  ->  /data/mk10probe/OIP.jpg   crc 2006517171
+```
+
+A separate run moments later, asking with **`[".jpg"]`** alone, came back empty.
+
+Every sweep we have ever run used a leading dot, and every one came back empty. Waveshare's own demo passes
+`"wav"` with no dot. The obvious reading is that **the dot was never accepted and the empty answers were our
+mistake, not the device being coy**. `files` now tests both forms against each other before sweeping, and the
+sweep lists are bare.
+
+If that holds, `getFilesBySuffix` becomes a way to enumerate the device's filesystem by extension — which is
+the cheapest route to finding where a theme actually lives, and makes step 2 of theme mode a lot less blind.
+It is **not confirmed**: the other reading is that the listing only knows about files touched in the same
+session, which the first run would also explain. One sweep from a fresh connection separates the two.
 
 Those three answers are what stand between us and trying a theme.
 
