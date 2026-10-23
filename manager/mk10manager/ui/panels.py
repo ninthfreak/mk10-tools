@@ -435,8 +435,10 @@ class DevicePanel(QWidget):
         self.status.setWordWrap(True)
         left.addRow("Status", self.status)
         self.throughput = _muted("")
-        self.throughput.setToolTip("How long the MK10 takes to accept one picture. If that time is close to "
-                                   "the gap between redraws, the device is the limit, not the setting.")
+        self.throughput.setToolTip("How many whole-canvas pictures a second are going out, and how long it "
+                                   "takes to hand one to the serial port. That time is this PC's side only — "
+                                   "the MK10 decodes and draws it afterwards, which we can't see from here. "
+                                   "A small number means this PC isn't the limit.")
         left.addRow("Pictures sent", self.throughput)
         prow = QHBoxLayout()
         self.port = QComboBox()
@@ -479,7 +481,9 @@ class DevicePanel(QWidget):
         self.meter_fps.setRange(1, 20)
         self.meter_fps.setValue(int(s.get("meter_fps", 10)))
         self.meter_fps.setToolTip("How many times a second the whole picture is redrawn and sent to the MK10 "
-                                  "while a live meter is on screen. Lower if the display looks busy.")
+                                  "while a live meter is on screen. Raise it if meters look jerky; lower it "
+                                  "if the display starts lagging behind. Changing it here takes effect at "
+                                  "once — the setting is remembered, so a new default won't move it.")
         arow.addWidget(self.levels)
         arow.addWidget(QLabel("Updates a second"))
         arow.addWidget(self.meter_fps)
@@ -570,7 +574,7 @@ class DevicePanel(QWidget):
         gap = now - last_at if last_at else 0.0
         rate = (sent - last_sent) / gap if gap > 0.2 and sent >= last_sent else 0.0
         each = device.last_frame_ms
-        self.throughput.setText("%.0f a second, %.0f ms each (%d so far)" % (rate, each, sent))
+        self.throughput.setText("%.0f a second, %.1f ms to send each (%d so far)" % (rate, each, sent))
 
     def _fill_ports(self):
         cur = self.ctl.config.settings.get("port", "auto")

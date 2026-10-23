@@ -168,9 +168,12 @@ On Windows use the Python inside the app's folder: `.venv\Scripts\python.exe lau
     meters* switch on the Device and app tab turns it off completely.
   - While a live meter is on screen the whole display picture is redrawn and sent to the MK10 several
     times a second. *Updates a second* on the Device and app tab sets how often (10 by default). The
-    *Pictures sent* line right above shows the rate you're actually getting and how long the MK10 takes
-    to accept one — if that time is close to the gap between redraws, the device is the limit and turning
-    the number up won't help.
+    *Pictures sent* line right above shows the rate you're actually getting and how long it takes to hand
+    one picture to the serial port. That time is this PC's side only — the MK10 decodes and draws it
+    afterwards, which nothing here can measure. A small number means the PC isn't the limit, so turning
+    *Updates a second* up is worth trying.
+  - **Your setting is remembered**, so changing the default in a later version won't move it. If meters look
+    jerky, raise the number yourself.
 - **Your settings, pictures and log** are in the settings folder. The Device and app tab has a button that opens it.
   - Windows: `%APPDATA%\MK10 Manager`
   - Linux: `~/.config/mk10-manager`
