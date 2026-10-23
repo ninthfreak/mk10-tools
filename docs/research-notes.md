@@ -46,16 +46,31 @@ Considered and set aside:
     theme images rather than redraw an arbitrary key.
   - What's left for smoother meters: gentler ballistics (done), and sending fewer bytes per frame — JPEG
     quality is fixed at 90 in `render/canvas.py`.
+
+### What the three probe runs settled (October 2026, real V2.32 hardware)
+
+Everything theme-shaped on this device is inert, and all of it points the same way: **no theme is installed.**
+
+| Asked | Answer |
+|---|---|
+| Which JSON methods exist? | Exactly the ten already known. None of them draws. |
+| `GET_THEME` | Only `bytesTotal` 2648 MB and `bytesAvailable` 2598 MB. No theme files. |
+| `SEND_PIXMAP`, six image names | Acknowledged with an empty payload every time; nothing on screen changed. |
+| `getFilesBySuffix`, every suffix | Empty, and it won't be pointed at a folder. |
+| `SCAN_STATE` | Acknowledged, empty. |
+
+**Installing a theme and re-running is the only way to revive any of this** — the on-device clock idea included.
+That means writing files to the device, so it needs asking first, and ScreenKey is the obvious way to put a
+theme there in the first place.
 - **Built-in theme clocks.** The firmware has its own analogue, digital, flip and image-based clocks (see
   `protocol.md`). If one can run on the small screen while the PC sends key pictures, we'd get an on-device clock
   that keeps going without the PC. Needs the SD card's `config.json` (theme format) and experiments with V1
   SEND_PIXMAP.
-- **`getFilesBySuffix`.** Worked out on the real device: `{"suffixs": [".jpg", ".png"]}` answers
-  `{"filePaths": [...]}`. The name is spelled `suffixs` and the value must be an array. On a device with no
-  theme installed it returned an empty list for images, so the open question is which folders it looks in —
-  `mk10probe.py files` sweeps suffixes and tries passing a folder under half a dozen parameter names. If a
-  folder parameter exists, the SD card's `config.json` (the theme format) becomes readable, which is the one
-  thread still connected to the on-device clock idea.
+- **`getFilesBySuffix`: solved, and it gives us nothing.** `{"suffixs": [".jpg", ".png"]}` answers
+  `{"filePaths": [...]}`; the name is spelled `suffixs` and the value must be an array. On the real device it
+  returned an empty list for **every** suffix tried, including `[""]` and `[]`, and it ignored a folder passed
+  under six different parameter names. Its search root is fixed and was empty. Nothing to read, no way to
+  point it somewhere else.
 - **`keyboardInput`.** If the device can type keystrokes itself, Wayland shortcut problems on Linux disappear. Untested.
 - **Second hand.** A clock with a second hand sends the full 896×304 picture every second. Check for flicker on real
   hardware.
