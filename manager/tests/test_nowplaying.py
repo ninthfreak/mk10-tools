@@ -104,10 +104,45 @@ def test_missing_playerctl_is_not_an_error(monkeypatch):
     assert "playerctl" in np.describe_backend(backend)
 
 
+class FakeTimeline:
+    """Stands in for WinRT's MediaTimelineProperties."""
+
+    def __init__(self, position, end_time, last_updated=None, start_time=None):
+        from datetime import timedelta
+        self.position = timedelta(seconds=position)
+        self.end_time = timedelta(seconds=end_time)
+        self.start_time = timedelta(seconds=start_time or 0)
+        self.last_updated_time = last_updated
+
+
+def test_timeline_extrapolates_a_stale_position():
+    """Browsers push a position once and leave it, so SMTC's own timestamp has to be used."""
+    from datetime import datetime, timedelta, timezone
+    stale = datetime.now(timezone.utc) - timedelta(seconds=30)
+    position, length = np._timeline(FakeTimeline(0.0, 549.7, stale), playing=True)
+    assert 29 < position < 32, "a position frozen at 0 should still advance"
+    assert length == pytest.approx(549.7)
+    # paused: whatever the player last said, unchanged
+    assert np._timeline(FakeTimeline(12.0, 300.0, stale), playing=False)[0] == pytest.approx(12.0)
+    # it never runs past the end
+    assert np._timeline(FakeTimeline(540.0, 549.7, stale), playing=True)[0] == pytest.approx(549.7)
+    # a track that starts at a non-zero offset is measured from its own start
+    assert np._timeline(FakeTimeline(70.0, 100.0, None, start_time=10.0), playing=False)[0] == \
+        pytest.approx(60.0)
+    # no timestamp, or a silly one, is ignored rather than added on
+    assert np._timeline(FakeTimeline(5.0, 100.0, None), playing=True)[0] == pytest.approx(5.0)
+    future = datetime.now(timezone.utc) + timedelta(days=2)
+    assert np._timeline(FakeTimeline(5.0, 100.0, future), playing=True)[0] == pytest.approx(5.0)
+    assert np._since(None) is None
+
+
 def test_windows_helpers():
     assert np._tidy_app_id("Spotify.exe") == "Spotify"
     assert np._tidy_app_id("Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic") == "ZuneMusic"
     assert np._tidy_app_id("") == ""
+    # browsers register an opaque hash; showing that on screen helps nobody
+    assert np._tidy_app_id("6CAE146F22A965B0") == ""
+    assert np._tidy_app_id("chrome") == "chrome"
     assert np._seconds(None) == 0.0
     assert np._seconds(__import__("datetime").timedelta(seconds=90)) == pytest.approx(90.0)
     # a Windows box without PyWinRT reports why rather than failing
