@@ -251,6 +251,27 @@ protocol. So the stock theme cannot be read by any route available to us.
 **Which leaves authoring one from the table above.** Difficulty 4/5, and the first attempt will be wrong in
 ways only the device can reveal — with `DELETE_THEME` (V1 cmd 11) as the way back.
 
+### Waveshare's own host code changes the picture
+
+`OpenSourceLicenseDemo_V1.0` is a small Qt host application Waveshare publish, and it calls every JSON method
+with real parameters. `protocol.md` now records all of them from that source rather than from guesswork. Three
+things follow that matter beyond the table:
+
+- **There is a V2 upload path.** `saveToFile` takes 64 KB base64 chunks at a `seek` offset and the device
+  acknowledges each one; `setFileCRC` commits. That is almost certainly how ScreenKey installs a theme, and it
+  is nothing to do with V1 FILE_START/FILE_END, which is what we had rehearsed.
+- **`cmd 100` is acknowledged, and the official loop is driven by that acknowledgement** — send a frame, wait
+  for the device to say it drew it, send the next. The device sets the pace. Our manager uses a fixed rate
+  instead, which is the likeliest reason its meters look uneven: we are guessing at an interval the device
+  could simply tell us.
+- **`getFilesBySuffix` returns objects**, `{filePath, crc}`, and the demo asks for `"wav"` **without a dot**,
+  listing results as things to hand to `playAudio`. So its search root is probably the sound or upload folder,
+  not anywhere a theme lives — which fits every empty answer we got.
+
+That makes the intended method legible at last: upload files with `saveToFile`/`setFileCRC`, point the SD
+card's `config.json` at the theme, and let the device render it while the host feeds pictures in. Every step
+is now a known call rather than a guess.
+
 ### A new lead: the device does UDP
 
 `handle_udp_connection` is in there, and the board has Wi-Fi the firmware configures. If the device listens on

@@ -1251,6 +1251,8 @@ def cmd_explore(args):
 
 #: getFilesBySuffix wants {"suffixs": [...]} and answers {"filePaths": [...]}. Confirmed on a real V2.32.
 FILE_SUFFIX_SWEEP = [
+    ["wav", "mp3"],                      # what Waveshare's own demo asks for, with no leading dot
+    ["Theme", "theme"],                  # ... so try the theme suffix that way too
     [".Theme", ".theme", ".THEME"],      # the SD card's config.json points at a .Theme file
     [".jpg", ".jpeg", ".png", ".bmp", ".gif"],
     [".json", ".conf", ".ini", ".txt", ".xml"],
@@ -1269,7 +1271,11 @@ def ask_files(link, params):
     if isinstance(paths, list):
         print("  -> %d file(s)" % len(paths))
         for path in paths[:40]:
-            print("       %s" % path)
+            # Waveshare's own demo shows each entry is {"filePath": ..., "crc": ...}, not a bare string.
+            if isinstance(path, dict):
+                print("       %-50s crc %s" % (path.get("filePath", "?"), path.get("crc", "?")))
+            else:
+                print("       %s" % path)
         if len(paths) > 40:
             print("       ... and %d more" % (len(paths) - 40))
     return reply, paths
