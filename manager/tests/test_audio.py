@@ -146,7 +146,8 @@ def test_monitor_only_measures_what_is_asked_for(qapp):
         # peaks are held and sink back rather than flapping to zero
         fake.set(INPUT, level=0.0)
         assert wait_until(qapp, lambda: 0.0 < mon.state.input.level < 0.5, 3)
-        assert wait_until(qapp, lambda: mon.state.input.level == 0.0, 3)
+        # the fall is gentle now, so give it longer to settle all the way to nothing
+        assert wait_until(qapp, lambda: mon.state.input.level == 0.0, 6)
         # switching the meters off stops the measuring
         mon.want_levels({INPUT})
         mon.set_levels_enabled(False)
@@ -154,6 +155,28 @@ def test_monitor_only_measures_what_is_asked_for(qapp):
         assert wait_until(qapp, lambda: fake.asked_for == frozenset(), 3)
     finally:
         mon.stop()
+
+
+def test_peak_decay_is_measured_in_seconds(qapp):
+    """The fall has to be the same speed whatever the poll rate, or the meter's feel changes with it."""
+    import time as _time
+    mon = AudioMonitor(FakeAudio())
+    mon._held = {OUTPUT: 1.0, INPUT: 0.0}
+    mon._held_at = _time.monotonic() - 1.0          # pretend a whole second passed since the last hold
+    held = mon._hold_peaks(state(), frozenset({OUTPUT}))
+    assert held.output.level == pytest.approx(AudioMonitor.DECAY_PER_SECOND, abs=0.02)
+    # half the time, less than half the fall (it's a curve, not a line)
+    mon._held = {OUTPUT: 1.0, INPUT: 0.0}
+    mon._held_at = _time.monotonic() - 0.5
+    half = mon._hold_peaks(state(), frozenset({OUTPUT})).output.level
+    assert AudioMonitor.DECAY_PER_SECOND < half < 1.0
+    # a level that isn't wanted drops straight to nothing
+    mon._held = {OUTPUT: 1.0, INPUT: 1.0}
+    assert mon._hold_peaks(state(), frozenset()).output.level == 0.0
+    # a louder reading wins immediately: meters rise at once and fall slowly
+    mon._held = {OUTPUT: 0.1, INPUT: 0.0}
+    mon._held_at = _time.monotonic()
+    assert mon._hold_peaks(state(out_level=0.9), frozenset({OUTPUT})).output.level == pytest.approx(0.9)
 
 
 def test_monitor_apply_goes_through_to_the_backend(qapp):

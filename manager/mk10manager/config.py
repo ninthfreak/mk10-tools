@@ -24,7 +24,7 @@ DEFAULT_SETTINGS = {
     "fallback_to_default": True,   # when no rule matches after a context change, go to the default page
     "tray_hint_shown": False,
     "audio_levels": True,          # measure how loud the speakers and microphone are, for the meters
-    "meter_fps": 6,                # redraws a second while a live meter is on screen
+    "meter_fps": 10,               # redraws a second while a live meter is on screen
     "slack_enabled": False,        # the token itself lives in its own file, never in here
     "slack_team_id": "",           # remembered from auth.test so deep links work before the first poll
     "slack_channels": "",          # conversation ids to count unread messages in
