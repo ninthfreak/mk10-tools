@@ -1358,6 +1358,23 @@ THEME_ANCHORS = ("Theme", "theme", "OriginPoint", "QGraphicsPixmapItem", "rotate
 
 #: Things that look like JSON keys in a config: short, wordy, no spaces or punctuation.
 JSON_KEY = __import__("re").compile(r"^[A-Za-z_][A-Za-z0-9_]{2,39}$")
+#: A C++ type name as the compiler writes it in a mangled symbol: a length then that many characters.
+MANGLED_NAME = __import__("re").compile(r"^(\d{1,2})([A-Za-z_][A-Za-z0-9_]*)$")
+
+
+def is_symbol(text):
+    """Mangled C++ symbols are noise when you're looking for a config format."""
+    return text.startswith(("_Z", "_GLOBAL__")) or "::" in text
+
+
+def widget_catalogue(by_text):
+    """C++ class names appear length-prefixed ('10FlipClocks'). Those classes are the theme's widgets."""
+    names = set()
+    for text in by_text:
+        m = MANGLED_NAME.match(text)
+        if m and len(m.group(2)) == int(m.group(1)):
+            names.add(m.group(2))
+    return sorted(names)
 
 
 def extract_strings(blob, min_len=4):
@@ -1397,13 +1414,14 @@ def theme_report(prog, show_all=False):
     for t in hits[:200 if show_all else 80]:
         print("  %s" % t)
 
-    keys = sorted(t for t in by_text if JSON_KEY.match(t) and any(a in t for a in THEME_ANCHORS))
+    keys = sorted(t for t in by_text
+                  if JSON_KEY.match(t) and not is_symbol(t) and any(a in t for a in THEME_ANCHORS))
     print("\n== Of those, the ones shaped like JSON keys (%d)" % len(keys))
     print("  " + "\n  ".join(keys[:120]))
 
-    classes = sorted(t for t in by_text if t.startswith("Q") and t[1:2].isupper() and len(t) < 48)
-    print("\n== Qt classes it uses (%d) — the widget types a theme can contain" % len(classes))
-    for t in classes[:80]:
+    widgets = widget_catalogue(by_text)
+    print("\n== Classes the program defines (%d) — the widget types a theme can contain" % len(widgets))
+    for t in widgets[:120]:
         print("  %s" % t)
     print("\nIf a group above looks like the theme vocabulary, that is what a .Theme file is made of.")
 
@@ -1425,11 +1443,101 @@ def cmd_theme_strings(args):
         print("Not an installer we recognise and not an ELF; reading it as raw bytes anyway.\n")
     theme_report(prog, args.all)
 
-    archives = [m.start() for m in __import__("re").finditer(rb"PK\x03\x04", blob)]
-    if archives:
-        print("\n== %d zip-like blobs inside the file" % len(archives))
-        print("  first few at offsets: %s" % ", ".join(str(a) for a in archives[:10]))
-        print("  A theme may be packed in one of these. Try opening the installer with 7-Zip.")
+    found_zips = embedded_zips(blob)
+    if found_zips:
+        print("\n== %d complete archive(s) inside the file" % len(found_zips))
+        for start, data in found_zips:
+            print("  at offset %d, %d bytes" % (start, len(data)))
+        print("  Run 'unpack' on the same file to list and extract what's in them.")
+    return 0
+
+
+def embedded_zips(blob, limit=40):
+    """Find whole zip archives inside a bigger file, by their end-of-central-directory records."""
+    import io
+    import zipfile
+    out = []
+    for m in __import__("re").finditer(rb"PK\x05\x06", blob):
+        pos = m.start()
+        if pos + 22 > len(blob):
+            continue
+        cd_size, cd_offset = struct.unpack_from("<II", blob, pos + 12)
+        (comment,) = struct.unpack_from("<H", blob, pos + 20)
+        start = pos - cd_size - cd_offset
+        if start < 0 or cd_size == 0:
+            continue
+        data = bytes(blob[start:pos + 22 + comment])
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                z.namelist()
+        except Exception:
+            continue
+        out.append((start, data))
+        if len(out) >= limit:
+            break
+    return out
+
+
+def safe_member(name):
+    """Never let an archive write outside where we told it to."""
+    import posixpath
+    clean = name.replace("\\", "/")
+    if clean.startswith("/") or ".." in clean.split("/"):
+        return None
+    return posixpath.normpath(clean).lstrip("./") or None
+
+
+def cmd_unpack(args):
+    """Offline: list, and optionally extract, the archives packed inside a ScreenKey installer."""
+    import io
+    import zipfile
+    try:
+        blob = pathlib_read(args.file)
+    except OSError as e:
+        sys.exit("Couldn't read %s: %s" % (args.file, e))
+    found_zips = embedded_zips(blob)
+    if not found_zips:
+        print("No complete zip archive found inside that file.")
+        print("NSIS and Inno installers aren't zips; 7-Zip can usually still open them.")
+        return 1
+    print("Found %d archive(s)." % len(found_zips))
+    out_root = None
+    if args.out:
+        import pathlib as _p
+        out_root = _p.Path(args.out)
+        if out_root.exists() and any(out_root.iterdir()):
+            sys.exit("%s already has files in it. Give me an empty folder." % out_root)
+        out_root.mkdir(parents=True, exist_ok=True)
+    for n, (start, data) in enumerate(found_zips, 1):
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            names = z.namelist()
+            print("\n== Archive %d at offset %d: %d entries" % (n, start, len(names)))
+            interesting = [x for x in names if any(w in x.lower()
+                                                   for w in ("theme", "font", ".json", ".jpg", ".png"))]
+            for name in (interesting or names)[:60]:
+                print("   %s" % name)
+            if len(interesting or names) > 60:
+                print("   ... and %d more" % (len(interesting or names) - 60))
+            if out_root is None:
+                continue
+            target = out_root / ("archive%d" % n)
+            target.mkdir(parents=True, exist_ok=True)
+            written = 0
+            for info in z.infolist():
+                if info.is_dir():
+                    continue
+                clean = safe_member(info.filename)
+                if clean is None:
+                    print("   skipped an entry that pointed outside: %s" % info.filename)
+                    continue
+                dest = target / clean
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                with z.open(info) as src, open(dest, "wb") as dst:
+                    dst.write(src.read(64 * 1024 * 1024))
+                written += 1
+            print("   extracted %d file(s) to %s" % (written, target))
+    if out_root is None:
+        print("\nPass --out FOLDER (an empty one) to extract them.")
     return 0
 
 
@@ -1750,6 +1858,9 @@ def main():
                                              "for the theme format (no device needed)")
     p.add_argument("file", help="the ScreenKey installer .exe, or an extracted KeyboardDevice")
     p.add_argument("--all", action="store_true", help="print more of each group")
+    p = sub.add_parser("unpack", help="offline: list or extract archives packed inside an installer")
+    p.add_argument("file", help="the ScreenKey installer .exe")
+    p.add_argument("--out", help="empty folder to extract into")
     p = sub.add_parser("files", help="read-only: ask the device which files it can see")
     common(p)
     p.add_argument("--suffix", action="append", help="suffix to ask for (repeatable); default: a sweep")
@@ -1771,7 +1882,7 @@ def main():
         sys.stdout.reconfigure(errors="replace")
     except (AttributeError, ValueError):
         pass
-    if args.cmd not in ("selftest", "theme-strings"):
+    if args.cmd not in ("selftest", "theme-strings", "unpack"):
         try:
             import serial  # noqa: F401
         except ImportError:
@@ -1779,7 +1890,8 @@ def main():
     handler = {"selftest": cmd_selftest, "demo": cmd_demo, "list": cmd_list, "probe": cmd_probe,
                "backlight": cmd_backlight, "show-test": cmd_show_test, "storage": cmd_storage,
                "send-test": cmd_send_test, "update": cmd_update, "explore": cmd_explore,
-               "pixmap": cmd_pixmap, "files": cmd_files, "theme-strings": cmd_theme_strings}[args.cmd]
+               "pixmap": cmd_pixmap, "files": cmd_files, "theme-strings": cmd_theme_strings,
+               "unpack": cmd_unpack}[args.cmd]
     sys.exit(handler(args))
 
 
