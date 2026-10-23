@@ -261,9 +261,14 @@ things follow that matter beyond the table:
   acknowledges each one; `setFileCRC` commits. That is almost certainly how ScreenKey installs a theme, and it
   is nothing to do with V1 FILE_START/FILE_END, which is what we had rehearsed.
 - **`cmd 100` is acknowledged, and the official loop is driven by that acknowledgement** — send a frame, wait
-  for the device to say it drew it, send the next. The device sets the pace. Our manager uses a fixed rate
-  instead, which is the likeliest reason its meters look uneven: we are guessing at an interval the device
-  could simply tell us.
+  for the device to say it drew it, send the next. The device sets the pace. The manager now does this, and
+  the acknowledgement turns out to be a `cmd 100` carrying the picture's own seq.
+
+  What that measurement says, on a real MK10 over USB: **27–31 ms per picture**, so the device can take
+  roughly 32–37 a second. At 30 updates a second asked for, the manager achieved 8–9. The device is therefore
+  **not** the bottleneck any more; the remaining ~85 ms a frame is ours, composing the canvas with QPainter
+  and encoding the JPEG on the Qt main thread. That is now the thing worth measuring, and it is a separate
+  problem from the protocol.
 - **`getFilesBySuffix` returns objects**, `{filePath, crc}`, and the demo asks for `"wav"` **without a dot**,
   listing results as things to hand to `playAudio`. So its search root is probably the sound or upload folder,
   not anywhere a theme lives — which fits every empty answer we got.
@@ -271,6 +276,18 @@ things follow that matter beyond the table:
 That makes the intended method legible at last: upload files with `saveToFile`/`setFileCRC`, point the SD
 card's `config.json` at the theme, and let the device render it while the host feeds pictures in. Every step
 is now a known call rather than a guess.
+
+**The upload half is built** (`mk10probe.py upload` / `delete`) and exercised against the simulator. What it
+has not done yet is touch a real device, and these are the questions only a real one can answer:
+
+1. Does `saveToFile` create the folder, or must `/data/mk10probe/` already exist? The V1 rehearsal has written
+   there, so on this unit it probably does.
+2. Does `getFilesBySuffix` list a file we just put there? Every answer so far has been empty, which may mean
+   it only searches its own folders — in which case the reply tells us *where* those are by elimination.
+3. Which `result.seek` convention does the firmware use? The upload doesn't depend on the answer, but it
+   prints anything unexpected, and it would settle how the reference is meant to be read.
+
+Those three answers are what stand between us and trying a theme.
 
 ### A new lead: the device does UDP
 

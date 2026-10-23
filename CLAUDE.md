@@ -33,6 +33,10 @@ Read `docs/protocol.md` before touching device code, and `docs/research-notes.md
     installer or the extracted `KeyboardDevice` for the theme format's vocabulary, and `unpack FILE --out DIR`
     lists or extracts archives packed inside the installer, and `theme-dig FILE` hunts for the theme itself as
     plain JSON (the installer keeps some of its payload uncompressed — that is how the firmware is extracted).
+  - `upload FILE [--dest PATH]` puts a file on the device the V2 way (`saveToFile` in 64 KB base64 chunks, then
+    `setFileCRC`), defaulting to `/data/mk10probe/`; `delete PATH...` removes files. **Both write to the device**
+    and ask you to type a word first. The probe refuses any write method until the running command unlocks it by
+    name, so the read-only commands can't write by accident.
 - **What's playing:** `manager/nowplaying-windows.bat` (double-click), `run-windows.bat nowplaying` or
   `./run-linux.sh nowplaying` prints what this PC reports (packages found, track, position, artwork) and
   saves it to `nowplaying-report.txt` in the settings folder. Use it rather than guessing when the Now

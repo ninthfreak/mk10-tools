@@ -70,6 +70,15 @@ There is a whole file-transfer path in the JSON protocol, separate from V1's FIL
 
 `MAX_READ_SIZE` in the reference is exactly `64 * 1024`.
 
+`mk10probe.py upload FILE [--dest PATH]` does this, and `delete PATH...` takes it back. Both ask you to type
+a word first, and the probe refuses to send any write method until the command that asked for it unlocks it
+by name — so `explore`, `files` and `pixmap` cannot write by accident. `keyboardInput` is never unlocked.
+
+One thing the reference leaves ambiguous: whether the `result.seek` coming back is the start of the chunk
+just written or the position after it. The two differ by a whole chunk, and guessing wrong would write the
+file inside out with neither side complaining, so `upload_v2` keeps its own offset and only warns if the
+device's answer matches neither end.
+
 ### Pictures are acknowledged, and that is the intended pacing
 
 The reference does **not** push frames on a timer. It sends one `cmd 100`, and when the device acknowledges
