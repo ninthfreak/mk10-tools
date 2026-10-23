@@ -60,8 +60,17 @@ Everything theme-shaped on this device is inert, and all of it points the same w
 | `SCAN_STATE` | Acknowledged, empty. |
 
 **Installing a theme and re-running is the only way to revive any of this** — the on-device clock idea included.
-That means writing files to the device, so it needs asking first, and ScreenKey is the obvious way to put a
-theme there in the first place.
+
+The SD card's `config.json` turned out to be a pointer, not a theme: themes sit on internal flash at
+`/data/theme/MK10/<folder>/<name>.Theme` (see `hardware.md`). So:
+
+- `getFilesBySuffix` was never asked for `.Theme`, which is the one suffix that might match something. That is
+  the next thing to try, and it costs nothing.
+- Reading the stock theme is the real blocker — the format can't be designed against without it, and there is
+  no read-file method in the protocol. The file is on flash, not the card, so pulling the card doesn't get it.
+  Waveshare's ScreenKey installer is the likeliest source of a copy.
+- If `defaultTheme` accepts an SD-card path, a theme could be installed by writing to the card alone, with no
+  file transfer to the device. That would make the whole experiment risk-free. Untested.
 - **Built-in theme clocks.** The firmware has its own analogue, digital, flip and image-based clocks (see
   `protocol.md`). If one can run on the small screen while the PC sends key pictures, we'd get an on-device clock
   that keeps going without the PC. Needs the SD card's `config.json` (theme format) and experiments with V1

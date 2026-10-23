@@ -1251,6 +1251,7 @@ def cmd_explore(args):
 
 #: getFilesBySuffix wants {"suffixs": [...]} and answers {"filePaths": [...]}. Confirmed on a real V2.32.
 FILE_SUFFIX_SWEEP = [
+    [".Theme", ".theme", ".THEME"],      # the SD card's config.json points at a .Theme file
     [".jpg", ".jpeg", ".png", ".bmp", ".gif"],
     [".json", ".conf", ".ini", ".txt", ".xml"],
     [".bin", ".dat", ".so", ".ttf", ".zip"],
