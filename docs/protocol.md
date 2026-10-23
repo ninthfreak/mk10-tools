@@ -52,7 +52,7 @@ part of the display**. `mk10probe.py explore` does this.
 | `setVolume` | `{"level"?: 0-7}` *(unverified parameter name)* | Probably |
 | `playAudio`, `stopAudio` | Device speaker *(unverified parameters)* | Untested |
 | `keyboardInput` | Probably makes the device type keystrokes as a USB keyboard *(unverified)* | Untested |
-| `getFilesBySuffix` | Lists files. Wants a parameter spelled **`suffixs`** (confirmed on the real device: anything else answers `Missing 'suffixs' parameter`). The value's shape isn't known yet | Read-only |
+| `getFilesBySuffix` | Lists files. Confirmed on a real V2.32: `{"suffixs": [".jpg", ".png"]}` → `{"filePaths": [...]}`. The name really is spelled `suffixs`, the value **must be an array** (a plain string answers `'suffixs' must be an array`), and anything else answers `Missing 'suffixs' parameter`. On a device with no theme it returned an empty list; which folders it searches isn't known | Read-only |
 | `saveToFile`, `setFileCRC`, `deleteFiles` | Write or delete files on the device | **No** without a clear reason |
 
 ### getInfo result (V2.32, real device)

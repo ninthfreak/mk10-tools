@@ -13,6 +13,7 @@ python mk10probe.py storage              # firmware version and free space
 python mk10probe.py send-test            # rehearse a file transfer into /data/mk10probe/
 python mk10probe.py update FILE          # firmware update (asks you to type UPDATE first; no way back)
 python mk10probe.py explore              # read-only: what methods the firmware has, and what the read ones say
+python mk10probe.py files                # read-only: ask the device which files it can see
 python mk10probe.py pixmap               # experiment: can SEND_PIXMAP redraw part of the display?
 python mk10probe.py selftest             # check the packet code, no device needed
 python mk10probe.py demo                 # run against a simulated MK10 (Linux/macOS)
@@ -39,4 +40,8 @@ which image names the device knows, sends a small picture under each, and prints
 device while it runs. Nothing changing is a result too. Anything it does to the display is undone by starting
 MK10 Manager or running `show-test`.
 
-Neither command will touch `saveToFile`, `setFileCRC`, `deleteFiles` or `keyboardInput`.
+`files` uses `getFilesBySuffix`, whose call shape came out of `explore`: `{"suffixs": [".jpg", ".png"]}`
+answers `{"filePaths": [...]}`. It sweeps a set of suffixes and, with `--path`, tries passing a folder under
+several parameter names to find out whether it accepts one. Listing paths changes nothing.
+
+None of these commands will touch `saveToFile`, `setFileCRC`, `deleteFiles` or `keyboardInput`.
