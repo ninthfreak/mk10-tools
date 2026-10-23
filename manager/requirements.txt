@@ -1,2 +1,8 @@
 PySide6-Essentials>=6.5
 pyserial>=3.5
+
+# Windows only: reading what's playing (SMTC). Everything still works without these; the
+# "Now playing" screen just stays empty. Run "launch.pyw nowplaying" to check them.
+winrt-Windows.Media.Control>=3.2; sys_platform == "win32"
+winrt-Windows.Foundation>=3.2; sys_platform == "win32"
+winrt-Windows.Storage.Streams>=3.2; sys_platform == "win32"

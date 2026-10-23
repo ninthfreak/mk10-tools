@@ -22,7 +22,8 @@ USAGE = """examples:
   launch.pyw --minimized          start hidden in the tray
   launch.pyw set mode=meeting     set a variable in the running app
   launch.pyw page Browser         switch the running app to a page
-  launch.pyw message "Build done" 3   show a message on the small screen for 3 seconds"""
+  launch.pyw message "Build done" 3   show a message on the small screen for 3 seconds
+  launch.pyw nowplaying           print what this PC says is playing, and exit (a check, not a command)"""
 
 
 def server_name() -> str:
@@ -37,7 +38,8 @@ def parse_args(argv):
     p = argparse.ArgumentParser(prog="mk10-manager", description=APP_NAME, epilog=USAGE,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--minimized", action="store_true", help="start hidden in the tray")
-    p.add_argument("command", nargs="?", choices=["show", "set", "page", "message"], help=argparse.SUPPRESS)
+    p.add_argument("command", nargs="?", choices=["show", "set", "page", "message", "nowplaying"],
+                   help=argparse.SUPPRESS)
     p.add_argument("args", nargs="*", help=argparse.SUPPRESS)
     return p.parse_args(argv)
 
@@ -158,6 +160,12 @@ def main(argv=None):
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("mk10.manager")
         except Exception:
             pass
+
+    if ns.command == "nowplaying":
+        # A local check, not something to hand to a running copy.
+        from .system.nowplaying import report
+        print(report())
+        return 0
 
     msg = build_message(ns)
     if send_to_running(msg):

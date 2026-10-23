@@ -26,6 +26,8 @@ Read `docs/protocol.md` before touching device code, and `docs/research-notes.md
   - `cd opendeck-plugin && cargo test && cargo build --release`.
   - End-to-end: `python tests/fake_opendeck.py target/release/opendeck-mk10` (needs `websockets` and `Pillow`).
 - **Probe:** `python probe/mk10probe.py selftest` (no device), `demo` (simulated device), `probe --port COM6`.
+- **What's playing:** `python manager/launch.pyw nowplaying` prints what this PC reports (packages found,
+  track, position, artwork). Use it rather than guessing when the Now playing screen looks wrong.
 
 ## Hardware safety rules
 
@@ -63,7 +65,9 @@ editor forms through `schema.Field`. `render/meters.py` draws level meters behin
 `conditions.py` holds the one condition evaluator, shared by context rules (which switch pages) and key *states*
 (which repaint a key while something is true — that's what makes a mute key show the real mute state).
 `system/slack.py` is the Slack Web API client and its polling monitor; the token lives in its own 0600 file in
-the settings folder, never in `config.json`. `templates.py` builds ready-made pages for the New page window.
+the settings folder, never in `config.json`. `system/nowplaying.py` reads whatever the system says is playing
+(SMTC through PyWinRT on Windows — optional packages, absent means the feature is simply empty; MPRIS through
+`playerctl` on Linux) and caches the album art. `templates.py` builds ready-made pages for the New page window.
 `controller.py` is the hub. It owns pages, presses, rules (edge-triggered: they act only when the result changes),
 variables, debounced saving and undo snapshots (device settings are kept out of undo).
 `actions.py` runs key actions on a worker thread; actions that touch the app (page, variable, message, brightness,
