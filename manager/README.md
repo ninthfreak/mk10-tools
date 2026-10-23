@@ -167,7 +167,10 @@ On Windows use the Python inside the app's folder: `.venv\Scripts\python.exe lau
     page on screen actually shows a live meter, and stops the moment you switch away. The *Live level
     meters* switch on the Device and app tab turns it off completely.
   - While a live meter is on screen the whole display picture is redrawn and sent to the MK10 several
-    times a second. *Updates a second* on the Device and app tab sets how often (6 by default).
+    times a second. *Updates a second* on the Device and app tab sets how often (10 by default). The
+    *Pictures sent* line right above shows the rate you're actually getting and how long the MK10 takes
+    to accept one — if that time is close to the gap between redraws, the device is the limit and turning
+    the number up won't help.
 - **Your settings, pictures and log** are in the settings folder. The Device and app tab has a button that opens it.
   - Windows: `%APPDATA%\MK10 Manager`
   - Linux: `~/.config/mk10-manager`

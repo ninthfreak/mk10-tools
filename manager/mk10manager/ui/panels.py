@@ -434,6 +434,10 @@ class DevicePanel(QWidget):
         self.status = QLabel(ctl.device.status)
         self.status.setWordWrap(True)
         left.addRow("Status", self.status)
+        self.throughput = _muted("")
+        self.throughput.setToolTip("How long the MK10 takes to accept one picture. If that time is close to "
+                                   "the gap between redraws, the device is the limit, not the setting.")
+        left.addRow("Pictures sent", self.throughput)
         prow = QHBoxLayout()
         self.port = QComboBox()
         refresh = QPushButton("Refresh")
@@ -473,7 +477,7 @@ class DevicePanel(QWidget):
         self.levels.setChecked(bool(s.get("audio_levels", True)))
         self.meter_fps = QSpinBox()
         self.meter_fps.setRange(1, 20)
-        self.meter_fps.setValue(int(s.get("meter_fps", 6)))
+        self.meter_fps.setValue(int(s.get("meter_fps", 10)))
         self.meter_fps.setToolTip("How many times a second the whole picture is redrawn and sent to the MK10 "
                                   "while a live meter is on screen. Lower if the display looks busy.")
         arow.addWidget(self.levels)
@@ -521,6 +525,12 @@ class DevicePanel(QWidget):
         right.addStretch(1)
 
         self._fill_ports()
+        self._frames_timer = QTimer(self)
+        self._frames_timer.setInterval(1000)
+        self._frames_timer.timeout.connect(self._show_throughput)
+        self._frames_timer.start()
+        self._last_frames = (0, 0.0)
+        self._show_throughput()
         self.port.currentIndexChanged.connect(self._port_changed)
         self._bright_timer = QTimer(self)
         self._bright_timer.setSingleShot(True)
@@ -546,6 +556,21 @@ class DevicePanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         w.setLayout(layout)
         return w
+
+    def _show_throughput(self):
+        """The real frame rate, so a jerky meter can be blamed on the right thing."""
+        import time
+        device = self.ctl.device
+        sent, now = device.frames_sent, time.monotonic()
+        last_sent, last_at = self._last_frames
+        self._last_frames = (sent, now)
+        if not device.is_connected:
+            self.throughput.setText("Not connected.")
+            return
+        gap = now - last_at if last_at else 0.0
+        rate = (sent - last_sent) / gap if gap > 0.2 and sent >= last_sent else 0.0
+        each = device.last_frame_ms
+        self.throughput.setText("%.0f a second, %.0f ms each (%d so far)" % (rate, each, sent))
 
     def _fill_ports(self):
         cur = self.ctl.config.settings.get("port", "auto")
@@ -607,5 +632,5 @@ class DevicePanel(QWidget):
         self.b_label.setText("%d%%" % self.brightness.value())
         self.brightness.blockSignals(False)
         self.meter_fps.blockSignals(True)
-        self.meter_fps.setValue(int(s.get("meter_fps", 6)))
+        self.meter_fps.setValue(int(s.get("meter_fps", 10)))
         self.meter_fps.blockSignals(False)

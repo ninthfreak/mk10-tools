@@ -524,7 +524,9 @@ class AudioMonitor(QObject):
 
     SLOW = 0.5          # seconds between reads when nothing needs a live level
     FAST = 0.1          # ... and when something does
-    DECAY = 0.72        # level meters fall back this fast, so speech looks like speech and not like noise
+    #: How much of a held peak survives one second. Per *second*, not per read, so the meter falls at the
+    #: same speed whatever the poll rate — and gently enough that a few frames a second still look smooth.
+    DECAY_PER_SECOND = 0.15
 
     def __init__(self, backend=None, parent=None):
         super().__init__(parent)
@@ -533,6 +535,7 @@ class AudioMonitor(QObject):
         self._want: frozenset = frozenset()
         self._levels_on = True
         self._held = {OUTPUT: 0.0, INPUT: 0.0}
+        self._held_at = 0.0
         self._stop = threading.Event()
         self._poke = threading.Event()
         self._thread: threading.Thread | None = None
@@ -602,12 +605,18 @@ class AudioMonitor(QObject):
 
     def _hold_peaks(self, state: AudioState, want) -> AudioState:
         """A raw peak jumps about; hold the loudest and let it sink back so a meter reads like a meter."""
+        now = time.monotonic()
+        gap = min(1.0, max(0.0, now - self._held_at)) if self._held_at else 0.0
+        self._held_at = now
+        fall = self.DECAY_PER_SECOND ** gap
         sides = {}
         for target in (OUTPUT, INPUT):
             side = state.side(target)
             if target not in want:
                 self._held[target] = 0.0
             else:
-                self._held[target] = max(side.level, self._held[target] * self.DECAY)
+                held = max(side.level, self._held[target] * fall)
+                # Let it reach nothing instead of trailing a hairline bar and redrawing for ever.
+                self._held[target] = held if held >= 0.01 else 0.0
             sides[target] = replace(side, level=round(self._held[target], 3))
         return replace(state, output=sides[OUTPUT], input=sides[INPUT])
