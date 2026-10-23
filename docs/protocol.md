@@ -70,6 +70,9 @@ There is a whole file-transfer path in the JSON protocol, separate from V1's FIL
 
 `MAX_READ_SIZE` in the reference is exactly `64 * 1024`.
 
+`saveToFile` **creates missing folders**: an upload to `/data/mk10probe2/` worked with nothing having made
+that directory first. So a path does not have to exist before writing to it.
+
 `mk10probe.py upload FILE [--dest PATH]` does this, and `delete PATH...` takes it back. Both ask you to type
 a word first, and the probe refuses to send any write method until the command that asked for it unlocks it
 by name — so `explore`, `files` and `pixmap` cannot write by accident. `keyboardInput` is never unlocked.

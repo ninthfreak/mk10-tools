@@ -328,8 +328,17 @@ Two consequences:
   to find the theme is a dead end, and this closes it rather than opening it.
 - **It is the right tool for the other direction.** Put a theme there and this is how we confirm it landed.
 
-One test would separate "registry of uploads" from "a folder scan rooted somewhere above /data/mk10probe":
-upload a marker into a different folder and see whether it is listed. Registry says yes.
+That test has been run. A second upload to `/data/mk10probe2/marker.jpg` — a folder that did not exist —
+is listed beside the first, and the sweep from a fresh connection lists both. It is a registry of host
+uploads. Settled.
+
+### `saveToFile` creates the folders it needs
+
+`/data/mk10probe2/` was never created by anything. The upload made it, and the file inside it is real enough
+that the device lists it afterwards with the CRC we declared. Nothing had to make the directory first.
+
+That matters more than it sounds. Themes live at `/data/theme/MK10/<folder>/<name>.Theme` and no theme is
+installed, so those folders probably do not exist on this unit. We can write there anyway.
 
 Those three answers are what stand between us and trying a theme.
 
