@@ -64,7 +64,8 @@ Everything theme-shaped on this device is inert, and all of it points the same w
 The SD card's `config.json` turned out to be a pointer, not a theme: themes sit on internal flash at
 `/data/theme/MK10/<folder>/<name>.Theme` (see `hardware.md`). So:
 
-- `getFilesBySuffix` returns nothing for `.Theme` either, so it finds nothing whatever it is asked. Together
+- `getFilesBySuffix` returns nothing for `.Theme` either, so it finds nothing whatever it is asked. (Two
+  reasons, found later: the leading dot is never stripped, and it only lists host uploads. See above.) Together
   with `saveToFile`, `setFileCRC` and `deleteFiles` it reads as a file-management API for content the *host*
   uploads, searching one fixed upload folder that nothing has ever been put in. The device cannot be made to
   list the theme it is actually running.
@@ -178,6 +179,87 @@ with a public HTTPS endpoint registered in Azure → a relay service you host �
 a cloud service you own and operate, to learn things the sound card can't tell you. Worth knowing the route
 is real and supported; not worth building for ten keys and a small screen.
 
+## The theme format, read out of the firmware
+
+**A theme is JSON.** This is no longer a guess:
+
+```
+ThemeFile::switchPage_s(QJsonObject const&, int)
+VideoPlayer::onThemeFileSwitchPage(QJsonObject const&, int)
+```
+
+Both come out of the Qt meta-object data in `/data/KeyboardDevice`, which survives stripping. That was the
+one question that decided whether authoring a theme was feasible at all, and it fell the right way.
+
+### Structure
+
+Read off the string table in source order. Page level:
+
+| Key | Notes |
+|---|---|
+| `pages` | the array of pages |
+| `pageName`, `parentPageName` | pages form a tree |
+| `currentPage`, `main` | `main` looks like the root page's name |
+| `items` | the widgets on a page |
+| `canvas` | page-level canvas settings |
+| `V3.0` | sits with them; almost certainly a format version value |
+| `canvas_w`, `canvas_h`, `canvas_rotate`, `canvas_flip`, `device_bl` | device-level settings |
+| `pageSwitch`, `pageSwitchMode`, `jumpToPage`, `openPage`, `oneLevelUp` | how a key moves between pages |
+
+### Widgets, with the properties each one reads
+
+The factories are `QGraphics…Make`, and each one's property names sit immediately before its typeinfo in
+`.rodata`, which gives the grouping below. Common to the items: `scale`, `rotate`.
+
+| Factory | Properties |
+|---|---|
+| `QGraphicsPixmapItemMake` | `pixmap`, `OriginPoint_ax`, `OriginPoint_ay`, `canvasRotationAngle`, `scaledWidthTo`, `scaledHeightTo` |
+| `QGraphicsPixmapItemClockMake` | as above, plus the clock digit fields (`hour ten figures`, `minute single digits`, …) |
+| `QGraphicsRectItemMake` | `front_color` |
+| `QGraphicsTextItemMake` | `text_str`, `text_family`, `text_size`, `text_IsBold`, `text_customFont_flag`, `text_customFont_path`, `system_data_flag`, `text_font`, `shadeSize`, `shadeColor` |
+| `QGraphicsWidgetAudioType1Make` | `SoundColumnHeight`, `SoundSolidLineColor`, `SoundDashedColor`, `radius`, `DisplayDirection`, `Clockwise`, `SoundColumnWidth`, `SoundColumnWidthInterval`, `SoundRoundColor`, `RoundWidth`, `screen_w`, `screen_h` |
+| `QGraphicsWidgetAudioRectType1Make` | `SoundColumnStartColor`, `SoundColumnEndColor`, `rectWidthCount`, `rectWidth`, `rectWidthInterval`, `rectHeightCount`, `rectHeight`, `rectHeightInterval` |
+| `QGraphicsWidgetBarCircleMake` | `margin`, `back_color` |
+| `QGraphicsWidgetBarCircleType1Make` | `system_data_min_value`, `system_data_max_value`, `angleMinValue`, `angleMaxValue`, `arcRadius`, `arcCircularInterval`, `gradientColor1..3` |
+| `QGraphicsWidgetBarRectMake` | `corner_radius`, `lineargradient_flag`, `lineargradient_color` |
+| `QGraphicsWidgetBarRectParagraphsMake` | `border_width`, `border_color` |
+| `QGraphicsWidgetChartLineSeriesMake` | `series_color`, `grid_line_color`, `area_color`, `grid_line_flag`, `area_flag` |
+
+### Value formats
+
+- **Colours are strings**, not numbers: `r=%d,g=%d,b=%d,a=%d`. Literals in the binary include
+  `r=0,g=255,b=0,a=255` and `r=255,g=0,b=0,a=255`.
+- **Fonts are `QFont::toString()`**: `Microsoft YaHei,72,-1,5,50,0,0,0,0,0`. Qt 5.12's ten fields —
+  family, point size, pixel size, style hint, weight, style, underline, strikeout, fixed pitch, raw mode.
+- Images: `.jpg`, `.png`, `.bmp`, `.gif`; animations use `frame_%1.png` with `frameDelays`, `delayMs`,
+  `loopCount`. Video: `.mp4` through a separate `videoplayerinterfaceAPP` process.
+- Live values come through `system_data_flag` / `system_data_key` / `system_data_name` / `showUnit`, with
+  min/max as `system_data_min_value` and `system_data_max_value`.
+
+### What is still missing
+
+**Per-item geometry.** No `x`/`y`/`width`/`height` keys turn up in the item band. `item_offset` and
+`pageData` exist in the **V2.32** build but not in this 2022 one, so the schema moved between them. Position
+is the one thing we would still be guessing at.
+
+### Two corrections to the earlier notes
+
+- **`layer` is not a theme key.** It sits in the QMK block next to `dynamic_keymap_set_keycode`, `column` and
+  `keycode` — it is a keymap layer. The old table had it under Structure.
+- **`.Theme` as an extension appears nowhere in the firmware**, not once. The resolution folders are
+  `/data/theme/<width>x<height>/` — `480x480`, `800x480`, `1024x600` and so on — so for this device the path
+  to try is `/data/theme/896x304/`, not the `/data/theme/MK10/<folder>/<name>.Theme` the older notes record.
+
+### What the binary would not give up
+
+I tried to read the parser itself and got nowhere worth reporting. The code is ARM (A32, ~484k instructions),
+and none of these strings is referenced by an absolute address anywhere in the file — not even `getInfo`,
+which is certainly used. They are not Qt `QByteArrayData` literals either; a scan found 446 of those headers
+and none of them is ours. So the addresses are formed some other way, and without a real analysis tool
+(Ghidra, IDA, radare2 — none installed, and capstone alone is not enough) chasing it further is not a good
+use of time. It also matters less than it looks: this binary is **April 2022** and the device runs **V2.32**,
+so even a perfect read here might not match the firmware on the desk.
+
 ## What the firmware says a theme is made of
 
 From `mk10probe.py theme-strings` on `KeyboardDevice` V2.32 (pulled out of ScreenKey v1.1). These are class
@@ -251,6 +333,107 @@ protocol. So the stock theme cannot be read by any route available to us.
 **Which leaves authoring one from the table above.** Difficulty 4/5, and the first attempt will be wrong in
 ways only the device can reveal — with `DELETE_THEME` (V1 cmd 11) as the way back.
 
+## The firmware image: MK10_V1.0.img
+
+Waveshare's OpenSource package carries `MK10_V1.0.7z` (257 MB) holding `MK10_V1.0.img` (848 MB). It is an
+**Allwinner `IMAGEWTY`** firmware image — so the MK10 is an Allwinner SoC running Tina Linux (OpenWrt), not
+the bare-metal thing the serial protocol suggests. `probe/awimage.py` unpacks it; the index sits at 0x400 in
+1024-byte entries, each `filename_len / header_size / maintype[8] / subtype[16] / pad / filename[256]`, then
+u64 `stored_length`, `original_length`, `offset`.
+
+36 files, of which the ones that matter are `rootfs.fex` (838 MB, plain **ext4**, readable with `debugfs`
+without mounting) and `boot.fex` (Android bootimg).
+
+What it settled:
+
+- **`/data/KeyboardDevice` is stripped.** No `.symtab`, only `.dynsym`. So the demangled signature
+  `theme-strings` found came from RTTI or Qt meta-object data, not a symbol table, and reading the theme
+  parser means working from vtables. I had called that 60/40 the other way; it was the 40.
+- **`/data/theme/` exists and is empty**, with one folder per screen resolution (`480x480`, `800x480`,
+  `1024x600` …, none of them 896x304). Themes really are provisioned after the factory, so this image has no
+  stock theme either. That part of the earlier conclusion holds.
+- **The device is Linux with a shell, busybox, procd, and `adbd` installed** (stopped and disabled at boot).
+
+### What the device actually is
+
+| | |
+|---|---|
+| SoC | Allwinner **T113** (the build tree is `../Tina-t113-pro/...`) |
+| OS | **Tina Linux** — OpenWrt with procd, busybox, `/etc/init.d` |
+| UI | Qt **5.12.9** on the **linuxfb** platform plugin, straight to `/dev/fb0`. Qt Charts is installed |
+| App | `/data/KeyboardDevice`, source project **`PCMonitorLinux2`** |
+| Root | ext4, **overlay-mounted**: `/overlay` comes from the UDISK partition, `/rom` is the read-only base |
+| Partitions | `boot-resource`, `env`, `env-redund`, `boot`, `rootfs`; UDISK is the remainder |
+| Tools on board | `busybox`, `adbd`, `nc`, `wget`, `curl`, `tcpdump`, `ntfs-3g`. **No** telnetd, dropbear or ssh |
+| USB gadget | configfs. `setusbconfig` offers `mtp`, `adb`, `rndis`, `adb,mtp`; the ACM serial port we talk to is built by hand in `/data/serial_adb.sh` |
+
+Two consequences worth holding on to:
+
+- **`/data` is on the writable overlay.** Anything `saveToFile` puts there persists, and deleting it puts the
+  device back. That is a much better safety story than it looked: a bad theme is a file, not a brick.
+- **`rndis` is in `setusbconfig`.** USB ethernet to the device is one line in `lunch.sh`, which with `nc`
+  already on board is a shell by another route if `adb` turns out to clash with the serial gadget.
+
+### Running our own code on the device
+
+Worth separating from theme mode, because it needs none of it.
+
+**The keyboard is not the Linux side.** `4250:426F` is a separate USB device behind the internal hub
+(`05E3:0610`) and types on its own. Replacing or killing `/data/KeyboardDevice` does **not** stop the keys
+working as a keyboard. What it costs is the LCD and the key-press *notifications* the SoC forwards to the
+host — the SoC learns presses over an internal UART (`/dev/ttyS1`, `STM32CommunicationObject`) and would
+have to be re-read for our own actions.
+
+**Building for it is a solved problem.** The device is glibc **2.23** (2016), far older than anything a
+modern toolchain targets, so link statically and the version stops mattering:
+
+```
+apt-get install gcc-arm-linux-gnueabihf libc6-dev-armhf-cross
+arm-linux-gnueabihf-gcc -O2 -static -o app app.c
+```
+
+That produces `ELF 32-bit LSB executable, ARM, EABI5, statically linked, for GNU/Linux 3.2.0` — a ~450 KB
+binary for a small program, which the T113's kernel will run. Verified by building one, not assumed.
+
+**Why it is interesting.** The 27–31 ms per frame is the device decoding a whole-canvas JPEG. Code running
+on the device would take state from the host (a few bytes) and draw locally, which removes that cost
+entirely rather than optimising it. The paths are all known from the image: `/dev/fb0` for the panel,
+`/sys/kernel/debug/dispdbg/{name,command,param,start}` with `lcd0`/`setbl` for backlight, `tinymix` for
+volume, `tinyplay` for sound.
+
+**The reversible way to try it.** `qt_app1` runs `lunch.sh` before `qt_app2` starts the app, so a card with
+
+```sh
+( sleep 15; /etc/init.d/qt_app2 stop; /mnt/SDCARD/ourapp ) &
+```
+
+takes the screen over after boot and changes nothing on the device. Pull the card and it is stock again.
+Using `overlayDir/` instead writes into the root filesystem and persists, which is the version to avoid
+until the above has been tried.
+
+### Recovery, if it comes to that
+
+`MK10_V1.0.img`'s device tree has `model = "MK10"` at the root, so it is a genuine device-specific image for
+this hardware, not a generic family one. With `cardtool.fex` / `cardscript.fex` (PhoenixCard makes a
+bootable SD that reflashes), LiveSuit/PhoenixSuit over USB, and Allwinner FEL mode as the last resort, a
+device with a wrecked overlay can be put back. Unknowns: how FEL is entered on this board, and that
+reflashing returns the 2022 firmware rather than the V2.32 the device shipped with.
+
+### The SD card is a root shell, by Waveshare's design
+
+`/etc/init.d/qt_app1` runs **`/mnt/SDCARD/lunch.sh` as root** at every boot, before the UI starts, and copies
+anything in **`/mnt/SDCARD/overlayDir/`** over the root filesystem first. Both are theirs, not a bug we found.
+
+This changes the whole investigation. Everything we wanted from the device — the installed theme, `/data`'s
+real contents, whatever `magic.bin` is — is a file copy away, with no writes to the device over the serial
+protocol and no way to brick it: pull the card and the hook is gone. `sdcard/lunch.sh` in this repo is a
+read-only dump that proves the hook exists and takes the theme off the device.
+
+It also means a theme can be *installed* by copying it into `/data/theme/`, without `saveToFile` at all.
+
+Caveat: the hook is read out of a 2022 image, and the unit runs V2.32. If `mk10dump/when.txt` never appears
+on the card, this firmware doesn't have it, and nothing happened.
+
 ### Waveshare's own host code changes the picture
 
 `OpenSourceLicenseDemo_V1.0` is a small Qt host application Waveshare publish, and it calls every JSON method
@@ -296,10 +479,48 @@ Every sweep we have ever run used a leading dot, and every one came back empty. 
 mistake, not the device being coy**. `files` now tests both forms against each other before sweeping, and the
 sweep lists are bare.
 
-If that holds, `getFilesBySuffix` becomes a way to enumerate the device's filesystem by extension — which is
-the cheapest route to finding where a theme actually lives, and makes step 2 of theme mode a lot less blind.
-It is **not confirmed**: the other reading is that the listing only knows about files touched in the same
-session, which the first run would also explain. One sweep from a fresh connection separates the two.
+Confirmed from a fresh connection, so it is not a per-session cache: `jpg` found it, `.jpg` found nothing.
+
+### What `getFilesBySuffix` actually lists
+
+The same sweep answered the bigger question, and the answer is not the hoped-for one.
+
+| Asked | Got |
+|---|---|
+| `["jpg"]` | our uploaded `/data/mk10probe/OIP.jpg` |
+| `[".jpg"]` | nothing — the dot is never stripped |
+| `[""]` | nothing — an empty string is a suffix that matches no file |
+| `[]` | **our uploaded file, and only that** |
+
+An empty list means *no filter*, so that last row is the device showing everything it is willing to show.
+It is one file: the one we uploaded. Not `/data/KeyboardDevice`, which certainly exists. Not
+`/data/mk10probe/test-ok.txt` from the V1 rehearsal, which was written through FILE_START/FILE_END rather
+than `saveToFile`. And `/data/mk10probe/` is a folder name **we invented**, so the firmware cannot be
+special-casing it.
+
+So `getFilesBySuffix` is **a registry of what the host has uploaded through `saveToFile`/`setFileCRC`**, not
+a view of the filesystem. The `crc` it reports back is the one we declared in `setFileCRC` — the device is
+repeating what it was told, not checksumming a file it found. That is exactly the API an installer wants:
+*have I already sent this, and does it still match?* so it can skip files that are already there.
+
+Two consequences:
+
+- **It will never show us the stock theme, or anything else the device shipped with.** Every empty answer we
+  collected was correct and meant "you have uploaded nothing", on top of the dot bug. Enumerating the device
+  to find the theme is a dead end, and this closes it rather than opening it.
+- **It is the right tool for the other direction.** Put a theme there and this is how we confirm it landed.
+
+That test has been run. A second upload to `/data/mk10probe2/marker.jpg` — a folder that did not exist —
+is listed beside the first, and the sweep from a fresh connection lists both. It is a registry of host
+uploads. Settled.
+
+### `saveToFile` creates the folders it needs
+
+`/data/mk10probe2/` was never created by anything. The upload made it, and the file inside it is real enough
+that the device lists it afterwards with the CRC we declared. Nothing had to make the directory first.
+
+That matters more than it sounds. Themes live at `/data/theme/MK10/<folder>/<name>.Theme` and no theme is
+installed, so those folders probably do not exist on this unit. We can write there anyway.
 
 Those three answers are what stand between us and trying a theme.
 
