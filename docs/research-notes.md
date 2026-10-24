@@ -179,6 +179,87 @@ with a public HTTPS endpoint registered in Azure → a relay service you host �
 a cloud service you own and operate, to learn things the sound card can't tell you. Worth knowing the route
 is real and supported; not worth building for ten keys and a small screen.
 
+## The theme format, read out of the firmware
+
+**A theme is JSON.** This is no longer a guess:
+
+```
+ThemeFile::switchPage_s(QJsonObject const&, int)
+VideoPlayer::onThemeFileSwitchPage(QJsonObject const&, int)
+```
+
+Both come out of the Qt meta-object data in `/data/KeyboardDevice`, which survives stripping. That was the
+one question that decided whether authoring a theme was feasible at all, and it fell the right way.
+
+### Structure
+
+Read off the string table in source order. Page level:
+
+| Key | Notes |
+|---|---|
+| `pages` | the array of pages |
+| `pageName`, `parentPageName` | pages form a tree |
+| `currentPage`, `main` | `main` looks like the root page's name |
+| `items` | the widgets on a page |
+| `canvas` | page-level canvas settings |
+| `V3.0` | sits with them; almost certainly a format version value |
+| `canvas_w`, `canvas_h`, `canvas_rotate`, `canvas_flip`, `device_bl` | device-level settings |
+| `pageSwitch`, `pageSwitchMode`, `jumpToPage`, `openPage`, `oneLevelUp` | how a key moves between pages |
+
+### Widgets, with the properties each one reads
+
+The factories are `QGraphics…Make`, and each one's property names sit immediately before its typeinfo in
+`.rodata`, which gives the grouping below. Common to the items: `scale`, `rotate`.
+
+| Factory | Properties |
+|---|---|
+| `QGraphicsPixmapItemMake` | `pixmap`, `OriginPoint_ax`, `OriginPoint_ay`, `canvasRotationAngle`, `scaledWidthTo`, `scaledHeightTo` |
+| `QGraphicsPixmapItemClockMake` | as above, plus the clock digit fields (`hour ten figures`, `minute single digits`, …) |
+| `QGraphicsRectItemMake` | `front_color` |
+| `QGraphicsTextItemMake` | `text_str`, `text_family`, `text_size`, `text_IsBold`, `text_customFont_flag`, `text_customFont_path`, `system_data_flag`, `text_font`, `shadeSize`, `shadeColor` |
+| `QGraphicsWidgetAudioType1Make` | `SoundColumnHeight`, `SoundSolidLineColor`, `SoundDashedColor`, `radius`, `DisplayDirection`, `Clockwise`, `SoundColumnWidth`, `SoundColumnWidthInterval`, `SoundRoundColor`, `RoundWidth`, `screen_w`, `screen_h` |
+| `QGraphicsWidgetAudioRectType1Make` | `SoundColumnStartColor`, `SoundColumnEndColor`, `rectWidthCount`, `rectWidth`, `rectWidthInterval`, `rectHeightCount`, `rectHeight`, `rectHeightInterval` |
+| `QGraphicsWidgetBarCircleMake` | `margin`, `back_color` |
+| `QGraphicsWidgetBarCircleType1Make` | `system_data_min_value`, `system_data_max_value`, `angleMinValue`, `angleMaxValue`, `arcRadius`, `arcCircularInterval`, `gradientColor1..3` |
+| `QGraphicsWidgetBarRectMake` | `corner_radius`, `lineargradient_flag`, `lineargradient_color` |
+| `QGraphicsWidgetBarRectParagraphsMake` | `border_width`, `border_color` |
+| `QGraphicsWidgetChartLineSeriesMake` | `series_color`, `grid_line_color`, `area_color`, `grid_line_flag`, `area_flag` |
+
+### Value formats
+
+- **Colours are strings**, not numbers: `r=%d,g=%d,b=%d,a=%d`. Literals in the binary include
+  `r=0,g=255,b=0,a=255` and `r=255,g=0,b=0,a=255`.
+- **Fonts are `QFont::toString()`**: `Microsoft YaHei,72,-1,5,50,0,0,0,0,0`. Qt 5.12's ten fields —
+  family, point size, pixel size, style hint, weight, style, underline, strikeout, fixed pitch, raw mode.
+- Images: `.jpg`, `.png`, `.bmp`, `.gif`; animations use `frame_%1.png` with `frameDelays`, `delayMs`,
+  `loopCount`. Video: `.mp4` through a separate `videoplayerinterfaceAPP` process.
+- Live values come through `system_data_flag` / `system_data_key` / `system_data_name` / `showUnit`, with
+  min/max as `system_data_min_value` and `system_data_max_value`.
+
+### What is still missing
+
+**Per-item geometry.** No `x`/`y`/`width`/`height` keys turn up in the item band. `item_offset` and
+`pageData` exist in the **V2.32** build but not in this 2022 one, so the schema moved between them. Position
+is the one thing we would still be guessing at.
+
+### Two corrections to the earlier notes
+
+- **`layer` is not a theme key.** It sits in the QMK block next to `dynamic_keymap_set_keycode`, `column` and
+  `keycode` — it is a keymap layer. The old table had it under Structure.
+- **`.Theme` as an extension appears nowhere in the firmware**, not once. The resolution folders are
+  `/data/theme/<width>x<height>/` — `480x480`, `800x480`, `1024x600` and so on — so for this device the path
+  to try is `/data/theme/896x304/`, not the `/data/theme/MK10/<folder>/<name>.Theme` the older notes record.
+
+### What the binary would not give up
+
+I tried to read the parser itself and got nowhere worth reporting. The code is ARM (A32, ~484k instructions),
+and none of these strings is referenced by an absolute address anywhere in the file — not even `getInfo`,
+which is certainly used. They are not Qt `QByteArrayData` literals either; a scan found 446 of those headers
+and none of them is ours. So the addresses are formed some other way, and without a real analysis tool
+(Ghidra, IDA, radare2 — none installed, and capstone alone is not enough) chasing it further is not a good
+use of time. It also matters less than it looks: this binary is **April 2022** and the device runs **V2.32**,
+so even a perfect read here might not match the firmware on the desk.
+
 ## What the firmware says a theme is made of
 
 From `mk10probe.py theme-strings` on `KeyboardDevice` V2.32 (pulled out of ScreenKey v1.1). These are class
@@ -272,6 +353,26 @@ What it settled:
   `1024x600` …, none of them 896x304). Themes really are provisioned after the factory, so this image has no
   stock theme either. That part of the earlier conclusion holds.
 - **The device is Linux with a shell, busybox, procd, and `adbd` installed** (stopped and disabled at boot).
+
+### What the device actually is
+
+| | |
+|---|---|
+| SoC | Allwinner **T113** (the build tree is `../Tina-t113-pro/...`) |
+| OS | **Tina Linux** — OpenWrt with procd, busybox, `/etc/init.d` |
+| UI | Qt **5.12.9** on the **linuxfb** platform plugin, straight to `/dev/fb0`. Qt Charts is installed |
+| App | `/data/KeyboardDevice`, source project **`PCMonitorLinux2`** |
+| Root | ext4, **overlay-mounted**: `/overlay` comes from the UDISK partition, `/rom` is the read-only base |
+| Partitions | `boot-resource`, `env`, `env-redund`, `boot`, `rootfs`; UDISK is the remainder |
+| Tools on board | `busybox`, `adbd`, `nc`, `wget`, `curl`, `tcpdump`, `ntfs-3g`. **No** telnetd, dropbear or ssh |
+| USB gadget | configfs. `setusbconfig` offers `mtp`, `adb`, `rndis`, `adb,mtp`; the ACM serial port we talk to is built by hand in `/data/serial_adb.sh` |
+
+Two consequences worth holding on to:
+
+- **`/data` is on the writable overlay.** Anything `saveToFile` puts there persists, and deleting it puts the
+  device back. That is a much better safety story than it looked: a bad theme is a file, not a brick.
+- **`rndis` is in `setusbconfig`.** USB ethernet to the device is one line in `lunch.sh`, which with `nc`
+  already on board is a shell by another route if `adb` turns out to clash with the serial gadget.
 
 ### The SD card is a root shell, by Waveshare's design
 
