@@ -374,6 +374,51 @@ Two consequences worth holding on to:
 - **`rndis` is in `setusbconfig`.** USB ethernet to the device is one line in `lunch.sh`, which with `nc`
   already on board is a shell by another route if `adb` turns out to clash with the serial gadget.
 
+### Running our own code on the device
+
+Worth separating from theme mode, because it needs none of it.
+
+**The keyboard is not the Linux side.** `4250:426F` is a separate USB device behind the internal hub
+(`05E3:0610`) and types on its own. Replacing or killing `/data/KeyboardDevice` does **not** stop the keys
+working as a keyboard. What it costs is the LCD and the key-press *notifications* the SoC forwards to the
+host — the SoC learns presses over an internal UART (`/dev/ttyS1`, `STM32CommunicationObject`) and would
+have to be re-read for our own actions.
+
+**Building for it is a solved problem.** The device is glibc **2.23** (2016), far older than anything a
+modern toolchain targets, so link statically and the version stops mattering:
+
+```
+apt-get install gcc-arm-linux-gnueabihf libc6-dev-armhf-cross
+arm-linux-gnueabihf-gcc -O2 -static -o app app.c
+```
+
+That produces `ELF 32-bit LSB executable, ARM, EABI5, statically linked, for GNU/Linux 3.2.0` — a ~450 KB
+binary for a small program, which the T113's kernel will run. Verified by building one, not assumed.
+
+**Why it is interesting.** The 27–31 ms per frame is the device decoding a whole-canvas JPEG. Code running
+on the device would take state from the host (a few bytes) and draw locally, which removes that cost
+entirely rather than optimising it. The paths are all known from the image: `/dev/fb0` for the panel,
+`/sys/kernel/debug/dispdbg/{name,command,param,start}` with `lcd0`/`setbl` for backlight, `tinymix` for
+volume, `tinyplay` for sound.
+
+**The reversible way to try it.** `qt_app1` runs `lunch.sh` before `qt_app2` starts the app, so a card with
+
+```sh
+( sleep 15; /etc/init.d/qt_app2 stop; /mnt/SDCARD/ourapp ) &
+```
+
+takes the screen over after boot and changes nothing on the device. Pull the card and it is stock again.
+Using `overlayDir/` instead writes into the root filesystem and persists, which is the version to avoid
+until the above has been tried.
+
+### Recovery, if it comes to that
+
+`MK10_V1.0.img`'s device tree has `model = "MK10"` at the root, so it is a genuine device-specific image for
+this hardware, not a generic family one. With `cardtool.fex` / `cardscript.fex` (PhoenixCard makes a
+bootable SD that reflashes), LiveSuit/PhoenixSuit over USB, and Allwinner FEL mode as the last resort, a
+device with a wrecked overlay can be put back. Unknowns: how FEL is entered on this board, and that
+reflashing returns the 2022 firmware rather than the V2.32 the device shipped with.
+
 ### The SD card is a root shell, by Waveshare's design
 
 `/etc/init.d/qt_app1` runs **`/mnt/SDCARD/lunch.sh` as root** at every boot, before the UI starts, and copies
