@@ -52,6 +52,18 @@ and nothing happened — this cannot half-work.
   talk to is built by hand in `/data/serial_adb.sh`, so switching modes probably takes the serial protocol
   away with it. `rndis` plus the on-board `nc` is the less invasive route to a shell if we ever want one.
 
+## Why everything is in one file now
+
+The first version wrote a dozen separate files. On the real device only the first, `when.txt`, had anything
+in it — the rest existed but were empty. Writes were still in cache when the card stopped being written to,
+and only the earliest one had been flushed.
+
+So v2 writes a single `report.txt`, calls `sync` after every section, and leaves the slow directory copying
+switched off unless you create an empty file called `copy-everything` beside `lunch.sh` on the card. A
+provisioned `/data` can take long enough to copy that pulling the card loses everything after it.
+
+If `report.txt` ends with `===== report complete =====`, nothing was lost.
+
 ## Rules for anything you put in here
 
 `qt_app1` waits for this script to finish before the device starts its UI. So:
