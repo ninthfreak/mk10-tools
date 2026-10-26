@@ -1394,7 +1394,8 @@ def cmd_files(args):
                     if paths:
                         print("\n  %s=%r found something. That's the folder parameter." % (name, folder))
                         break
-        print("\nDone. An empty list every time means it only looks where it wants to.")
+        print("\nDone. This lists what THIS host has uploaded with saveToFile, not the device's own files,")
+        print("so an empty answer means nothing has been uploaded - not that the device is hiding anything.")
     finally:
         link.close()
     return 0

@@ -2,6 +2,22 @@
 
 Waveshare MK10 "Multi-Functional AI Voice Control Panel": 10 LCD keys plus a 2.01" secondary screen.
 
+## What the firmware image says (MK10_V1.0.img, read October 2026)
+
+| | |
+|---|---|
+| SoC | Allwinner **T113 / R528** (same die family), dual Cortex-A7. The device tree is `compatible = allwinner,t113 / allwinner,r528` and its root `model` is literally **`MK10`** |
+| C library | **glibc 2.23**. Cross-built binaries must be statically linked to run |
+| OS | **Tina Linux**, Allwinner's OpenWrt: procd, busybox, `/etc/init.d` |
+| UI toolkit | **Qt 5.12.9**, `linuxfb` platform plugin, drawing to `/dev/fb0`. Qt Charts installed |
+| Application | `/data/KeyboardDevice` (ARM 32-bit, stripped), source project `PCMonitorLinux2` |
+| Root filesystem | ext4, overlay-mounted: `/overlay` from the UDISK partition over a read-only base |
+| Partitions | `boot-resource`, `env`, `env-redund`, `boot`, `rootfs`; UDISK takes the rest |
+| Crypto / identity | `/dev/atsha204a` — a Microchip ATSHA204A. That is what `magic.bin` talks to |
+| On board | `busybox`, `adbd`, `nc`, `wget`, `curl`, `tcpdump`, `ntfs-3g`. No telnetd, dropbear or ssh |
+
+`/data` sits on the writable overlay, so files put there persist and deleting them undoes it.
+
 ## Inside
 
 - **Main chip:** Allwinner T113-S3 (two Cortex-A7 cores, 128 MB DDR3 in the package). It runs Linux

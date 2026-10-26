@@ -53,10 +53,55 @@ not guesses. There are no undocumented methods, and **nothing that draws part of
 | `playAudio` | `{"filePath": "/data/sound/temp.wav"}` | a path on the device |
 | `stopAudio` | `{}` | |
 | `keyboardInput` | `{"inputString": "Hello! 7895123"}` | the device types it as a USB keyboard |
-| `getFilesBySuffix` | `{"suffixs": ["wav"]}` | `result.filePaths` is an array of **objects**: `{"filePath": ..., "crc": ...}`. Note the demo passes `"wav"` with **no dot** |
+| `getFilesBySuffix` | `{"suffixs": ["wav"]}` | `result.filePaths` is an array of **objects**: `{"filePath": ..., "crc": ...}`. The suffix must be **bare**: a leading dot is never stripped and matches nothing. `[]` means no filter. It lists only what *this host* uploaded with `saveToFile`, with the CRC the host declared — not the device's own files |
 | `saveToFile` | `{"filePath": ..., "seek": int, "data": "<base64>"}` | `result.seek` — see below |
 | `setFileCRC` | `{"filePath": ..., "crc": "<decimal as a string>"}` | ends an upload |
 | `deleteFiles` | `{"filePaths": [...]}` | an array |
+
+### The firmware's own validation messages
+
+Read out of `/data/KeyboardDevice`. Useful because they say exactly what each method checks, and the wording
+identifies which check failed when the device refuses something:
+
+```
+Missing 'method' field              Field 'method' must be a string      Field 'method' cannot be empty
+Field 'parameters' must be an object                                     Empty JSON data provided
+JSON parse error: %1 at offset %2   Invalid JSON: expected object
+Unknown method: %1. Available methods: [%2]                              Method execution error: %1
+Missing 'level' parameter           'level' must be a number
+Backlight level must be between 0 and 100, got %1
+Volume level must be between 0 and 7, got %1
+Missing 'filePath' parameter        'filePath' must be a string          Missing 'crc' parameter
+'seek' must be a number             'data' must be a string              'seek' position cannot be negative
+Missing 'filePaths' parameter       'filePaths' must be an array
+'suffixs' must be an array
+'inputString' cannot be empty       'inputString' must be a string       inputLength
+```
+
+`deleteFiles` answers with `deletedFiles` and `failedFiles`. Replies carry `ack_method`, and `setVolume`'s
+range is confirmed as **0–7**.
+
+### Beyond the ten JSON methods
+
+The same binary carries a much wider internal command vocabulary, reached over the serial link by ScreenKey
+rather than through the V2 JSON API. Not verified against hardware, listed because it says what the device
+is capable of:
+
+- **Keyboard chip (QMK/VIA-style):** `dynamic_keymap_set_keycode`, `dynamic_keymap_set_keycodes`,
+  `dynamic_keymap_macro_set_buffer`, `request_upload_key`, `request_upload_string`, `request_mouse_control`,
+  `request_bootloader_jump`, with `row`, `col`, `layer`, `column`, `keycode`, `keyCodeH`/`keyCodeL`.
+- **Mouse:** `controlMouse`, `qmk_mouse_key`, `mouse_x`, `mouse_y`, `mouse_h`, `mouse_v`, `qmk_mouse_event`.
+- **Wi-Fi:** `wifissid`, `wifipsk`, `getDeviceNetworkState`, and a `NetworkManager` driving `wpa_supplicant`
+  and `udhcpc` on `wlan0`.
+- **OBS Studio, built into the firmware:** `ToggleRecord`, `ToggleStream`, `SetCurrentProgramScene`,
+  `ToggleSceneItemEnabled`, `GetRecordStatus`, `GetStreamStatus`, `sceneName`, `sceneItemId`.
+- **Home Assistant, likewise:** `homeAssistantControl`, `homeAssistantStateChanged`, `entity_id`, `GetState`.
+- **Encoders:** `encoder_qmk_mouse`, `encoder_keyboard`, `encoder_device_volume`, `encoder_device_brightness`,
+  `encoder_system_volume`, `encoder_system_brightness`, `encoder_system_media`.
+- **Weather:** OpenWeatherMap icon codes (`01d`, `04n`, `shower rain`, …) plus a 564-file HeWeather icon set
+  at `/data/static/icon/weather-icon-S1/`.
+- **Other:** `setDeviceName`, `ShowImage`, `deviceMessage`, `playAudio`/`stopAudio` over `tinyplay`,
+  `keyboardInput`, and an AI assistant (`xiaozhiAI`) with its own two binaries.
 
 ### Uploading a file the V2 way
 
@@ -69,6 +114,9 @@ There is a whole file-transfer path in the JSON protocol, separate from V1's FIL
    string. That commits it.
 
 `MAX_READ_SIZE` in the reference is exactly `64 * 1024`.
+
+`saveToFile` **creates missing folders**: an upload to `/data/mk10probe2/` worked with nothing having made
+that directory first. So a path does not have to exist before writing to it.
 
 `mk10probe.py upload FILE [--dest PATH]` does this, and `delete PATH...` takes it back. Both ask you to type
 a word first, and the probe refuses to send any write method until the command that asked for it unlocks it
