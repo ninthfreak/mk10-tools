@@ -3,4 +3,4 @@
 *.sh text eol=lf
 *.png binary
 *.gz binary
-sdcard/lunch.sh text eol=lf
+sdcard-tools/lunch.sh text eol=lf

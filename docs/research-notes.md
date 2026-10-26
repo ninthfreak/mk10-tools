@@ -426,7 +426,7 @@ anything in **`/mnt/SDCARD/overlayDir/`** over the root filesystem first. Both a
 
 This changes the whole investigation. Everything we wanted from the device — the installed theme, `/data`'s
 real contents, whatever `magic.bin` is — is a file copy away, with no writes to the device over the serial
-protocol and no way to brick it: pull the card and the hook is gone. `sdcard/lunch.sh` in this repo is a
+protocol and no way to brick it: pull the card and the hook is gone. `sdcard-tools/lunch.sh` in this repo is a
 read-only dump that proves the hook exists and takes the theme off the device.
 
 It also means a theme can be *installed* by copying it into `/data/theme/`, without `saveToFile` at all.
