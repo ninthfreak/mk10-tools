@@ -21,6 +21,8 @@ magic.bin
 KeyboardDevice
 DeviceUpgradeFirmware
 ScreenKey*.exe
+# Dumps pulled OFF the device's SD card. The scripts we put ON it live in sdcard-tools/,
+# which is tracked - don't move them back in here or they vanish from the repo silently.
 sdcard/
 
 # Slack token, if a settings folder ever ends up inside the repo
