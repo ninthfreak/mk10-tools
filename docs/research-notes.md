@@ -431,8 +431,29 @@ read-only dump that proves the hook exists and takes the theme off the device.
 
 It also means a theme can be *installed* by copying it into `/data/theme/`, without `saveToFile` at all.
 
-Caveat: the hook is read out of a 2022 image, and the unit runs V2.32. If `mk10dump/when.txt` never appears
-on the card, this firmware doesn't have it, and nothing happened.
+**Confirmed on real hardware, October 2026.** `mk10dump/when.txt` appeared. The hook is live on the shipping
+firmware, not just the 2022 image, and it reported:
+
+```
+Thu Jan  1 08:00:12 CST 1970
+Linux TinaLinux 5.4.61 #216 SMP PREEMPT Tue Sep 23 05:38:52 UTC 2025 armv7l
+root=/dev/mmcblk0p5 init=/sbin/init
+partitions=boot-resource@mmcblk0p1:env@mmcblk0p2:env-redund@mmcblk0p3:boot@mmcblk0p4:rootfs@mmcblk0p5:UDISK@mmcblk0p6
+androidboot.hardware=sun8iw20p1  androidboot.dramsize=128  console=
+uboot_message=2018.05-g7e8280b(08/15/2025-10:00:55)
+model: MK10
+```
+
+Four things worth keeping from that:
+
+- **The firmware is current**: kernel built 23 September 2025, u-boot 15 August 2025. The hook survived three
+  years of updates, which makes it a deliberate feature rather than a leftover.
+- **`sun8iw20p1`** confirms the T113/R528 family, and **128 MB of RAM** — roomy for a framebuffer program,
+  tight for anything that wants its own Qt.
+- **UDISK is `mmcblk0p6`**, the writable overlay holding `/data`, exactly as the 2022 image's fstab implied.
+- **The clock starts at 1 January 1970** and the timezone is CST. There is no working RTC at boot, so the
+  device cannot know the time until something tells it. Anything drawing a clock on-device needs the host to
+  set it first.
 
 ### Waveshare's own host code changes the picture
 
