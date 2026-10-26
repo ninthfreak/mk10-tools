@@ -52,17 +52,23 @@ and nothing happened — this cannot half-work.
   talk to is built by hand in `/data/serial_adb.sh`, so switching modes probably takes the serial protocol
   away with it. `rndis` plus the on-board `nc` is the less invasive route to a shell if we ever want one.
 
-## Why everything is in one file now
+## Why the report is built in RAM
 
-The first version wrote a dozen separate files. On the real device only the first, `when.txt`, had anything
-in it — the rest existed but were empty. Writes were still in cache when the card stopped being written to,
-and only the earliest one had been flushed.
+The first run left every file after the first one empty. That is what a **full filesystem** looks like from
+a shell script: the redirection creates the file, the write fails for want of space, and the error message
+has nowhere to go either, so you get a 0-byte file and no complaint. `when.txt` was small and written first,
+so it fit; then `cp -r /data/image` filled the card and everything behind it was lost.
 
-So v2 writes a single `report.txt`, calls `sync` after every section, and leaves the slow directory copying
-switched off unless you create an empty file called `copy-everything` beside `lunch.sh` on the card. A
-provisioned `/data` can take long enough to copy that pulling the card loses everything after it.
+So the script now builds one report in `/tmp`, **keeps a copy at `/data/mk10dump-report.txt` on the device's
+own storage**, and touches the card exactly once at the end with a single small file. If the card is too
+full even for that, the copy on the device survives and the next run brings it out as
+`report-previous.txt`.
 
-If `report.txt` ends with `===== report complete =====`, nothing was lost.
+The directory copying stays off unless you create an empty file called `copy-everything` beside `lunch.sh`
+on the card, and it refuses to start with less than 64 MB free.
+
+If `report.txt` ends with `===== report complete =====`, nothing was lost. `df`, `/proc/partitions` and the
+card's own contents are near the top, so a space problem is visible immediately.
 
 ## Rules for anything you put in here
 
