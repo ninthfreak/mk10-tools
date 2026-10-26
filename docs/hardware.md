@@ -45,10 +45,40 @@ Pressing a key also makes the QMK chip send its own keystrokes, whatever any PC 
 - **Windows:** disable the MK10's keyboard (4250:426F) in Device Manager. This needs admin.
 - **Maybe:** remap the keys to nothing with VIA. Untested; medium confidence it works.
 
-## SD card
+## SD card — it is the whole computer
 
-The SD card holds **data only**: `config.json`, `mk10.bin` (240×296 boot splash, RGB565 little-endian),
-`log.txt`, `mk20-plus.bin`, and an empty `overlayDir`.
+**Corrected October 2026.** The card is not storage for the device. It **is** the device's system disk:
+every partition in the firmware image is on it, and `root=/dev/mmcblk0p5` on the boot line is a partition
+of this card. Windows shows only the first one, which is why we spent months thinking the card held
+"data only".
+
+Disk Management on a 3.75 GB card, against `sys_partition.fex`:
+
+| On the card | Partition | Size | What |
+|---|---|---|---|
+| 20 MB unallocated | — | 20 MB | raw boot0 / u-boot / toc, written to sectors with no partition |
+| 32 MB volume | `boot-resource` `p1` | 32 MB | FAT — **the only one Windows mounts**, and what the device calls `/mnt/SDCARD` |
+| ~6 MB | `boot` `p4` | 6.2 MB | kernel (Android bootimg) |
+| 1.00 GB RAW | `rootfs` `p5` | 1.00 GB | ext4, the root filesystem |
+| 2.69 GB RAW | `UDISK` `p6` | 2.69 GB | ext4, the writable overlay — this is where `/data` really lives |
+
+`env` and `env-redund` (`p2`, `p3`, 252 KB each) are too small for Disk Management to draw. Every size
+matches `sys_partition.fex` exactly, so this is settled rather than inferred.
+
+Three consequences:
+
+- **Copying the card is a complete firmware backup.** The note below used to say the opposite. With an image
+  of the card, the device cannot be bricked by anything we do to its software.
+- **The whole filesystem can be read and written from any PC with a card reader**, no serial protocol, no
+  `lunch.sh`, no upload path. The theme, `/data`, the running `KeyboardDevice` — all of it is just files on
+  partition 6.
+- **`/mnt/SDCARD` is only the 32 MB FAT partition**, and it already holds the boot resources. That is why the
+  first dump filled it. Don't write anything substantial there.
+
+### What is on the 32 MB partition
+
+`config.json`, `mk10.bin` (240×296 boot splash, RGB565 little-endian), `log.txt`, `mk20-plus.bin`, and an
+empty `overlayDir`.
 
 `config.json` is a short pointer file, **not** the theme itself:
 
@@ -57,14 +87,18 @@ The SD card holds **data only**: `config.json`, `mk10.bin` (240×296 boot splash
  "deviceBl": 30, "deviceVolume": 7, "enableXIAOZHIAI": true}
 ```
 
-- **Themes live on internal flash** under `/data/theme/MK10/<folder>/<name>.Theme`, one folder per theme, and
-  the card only says which one to load. The stock entry is Waveshare's own dated default theme.
+- **Themes live under `/data/theme/MK10/<folder>/<name>.Theme`** — on the card's UDISK partition, not on any
+  internal flash. One folder per theme, and `config.json` only says which to load. The stock entry is
+  Waveshare's own dated default theme. (The 2022 firmware image uses `/data/theme/<width>x<height>/` with no
+  `.Theme` extension; this device's own `config.json` is the authority for the firmware it runs, and it says
+  the `MK10/` form. The convention changed between builds.)
 - `deviceBl` and `deviceVolume` are the same values FIND_DEVICE reports back.
 - `enableXIAOZHIAI` switches on XiaoZhi, the voice assistant this device is sold around. Nothing here uses it.
 - **Open question:** whether `defaultTheme` will accept a path on the SD card. If it does, a theme can be
   installed by writing to the card alone, with no file transfer to the device at all.
 
-- The operating system is on internal flash, so copying the SD card is **not** a firmware backup.
+- Copying the SD card **is** a complete firmware backup — the operating system is on it. (This line used to
+  say the reverse, from before the partition table was read.)
 - `magic.bin` holds a key and IDs that look like device identity or activation data. **Never publish it.**
 
 ## Firmware versions seen

@@ -246,9 +246,11 @@ is the one thing we would still be guessing at.
 
 - **`layer` is not a theme key.** It sits in the QMK block next to `dynamic_keymap_set_keycode`, `column` and
   `keycode` — it is a keymap layer. The old table had it under Structure.
-- **`.Theme` as an extension appears nowhere in the firmware**, not once. The resolution folders are
-  `/data/theme/<width>x<height>/` — `480x480`, `800x480`, `1024x600` and so on — so for this device the path
-  to try is `/data/theme/896x304/`, not the `/data/theme/MK10/<folder>/<name>.Theme` the older notes record.
+- **`.Theme` as an extension appears nowhere in the 2022 firmware**, and its folders are
+  `/data/theme/<width>x<height>/`. I took that to mean the older note about
+  `/data/theme/MK10/<folder>/<name>.Theme` was wrong. It is the other way round: that note came from the
+  **device's own `config.json`**, which is authoritative for the firmware it actually runs, and the 2022
+  image is three years older. The convention changed between builds. Use the `MK10/` form.
 
 ### What the binary would not give up
 

@@ -49,6 +49,10 @@ Read `docs/protocol.md` before touching device code, and `docs/research-notes.md
 
 ## Hardware safety rules
 
+- **The SD card is the device's system disk**, not storage: `boot-resource`, `env`, `boot`, `rootfs` and
+  `UDISK` are all partitions of it, and `/data` lives on `UDISK`. Image the card before changing anything on
+  it — that image is a complete, restorable firmware backup. Windows mounts only the 32 MB `boot-resource`
+  partition, which is also what the device calls `/mnt/SDCARD`; it holds the boot resources and fills fast.
 - Only one program can open the MK10's serial port. Quit OpenDeck, ScreenKey and MK10 Manager before using another.
 - **Ask the user first** before sending anything to a real device that writes or deletes files (`saveToFile`,
   `setFileCRC`, `deleteFiles`, V1 FILE_START/FILE_END outside `/data/mk10probe/`, DELETE_THEME) or updates firmware.
