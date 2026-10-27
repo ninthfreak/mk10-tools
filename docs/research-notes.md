@@ -238,9 +238,9 @@ The factories are `QGraphics…Make`, and each one's property names sit immediat
 
 ### What is still missing
 
-**Per-item geometry.** No `x`/`y`/`width`/`height` keys turn up in the item band. `item_offset` and
-`pageData` exist in the **V2.32** build but not in this 2022 one, so the schema moved between them. Position
-is the one thing we would still be guessing at.
+**Per-item geometry.** No `x`/`y`/`width`/`height` keys turn up in the item band. Position is the one thing
+we would still be guessing at. (`pageData` is in fact present in every build checked — I had said it was
+V2.32-only, which was wrong. `item_offset` really is absent from the 2022 builds.)
 
 ### Two corrections to the earlier notes
 
@@ -375,6 +375,43 @@ Two consequences worth holding on to:
   device back. That is a much better safety story than it looked: a bad theme is a file, not a brick.
 - **`rndis` is in `setusbconfig`.** USB ethernet to the device is one line in `lunch.sh`, which with `nc`
   already on board is a shell by another route if `adb` turns out to clash with the serial gadget.
+
+### Reading the card: the running software is in the overlay
+
+The card's **partition 5 (`rootfs`)** `/data` turns out to be the pristine factory base — `theme/`, `image/`,
+`video/`, `fonts/`, `info/` and `audio/` all present and **all empty**, exactly matching the 2022 firmware
+image, with a `KeyboardDevice` that reports **V2.29**.
+
+The version ladder makes the structure obvious:
+
+| Copy | Version |
+|---|---|
+| Card's `rootfs` partition (p5) | **V2.29** |
+| Published `MK10_V1.0.img` | **V2.31** |
+| What the device actually reports | **V2.32** |
+
+So the binary the device runs is in neither: it is on **partition 6 (`UDISK`)**, the overlay. OpenWrt's
+overlayfs merges `UDISK`'s upper directory over the read-only rootfs, so everything ScreenKey ever installed
+— the firmware update, the theme, fonts, images — lives there and shadows the empty factory copies. Reading
+p5 shows the device as it left the factory; reading p6 shows what it has become. **p6 is the one that
+matters.**
+
+This also finally explains `.Theme`. The string appears in no build because the path is **data, not code**:
+`config.json` supplies `defaultTheme` as a complete path and the firmware just opens it. Neither my original
+note nor my correction of it was right — there was nothing to correct.
+
+### Pixel format, confirmed by arithmetic
+
+The factory `/data` carries raw framebuffer dumps whose sizes settle the format exactly:
+
+| File | Bytes | Works out as |
+|---|---|---|
+| `128x128.bin` | 32,768 | 128 × 128 × **2** — RGB565, one key |
+| `240x296.bin` | 142,080 | 240 × 296 × **2** — RGB565, the small screen |
+| `720x1280.bin` | 3,686,400 | 720 × 1280 × **4** — ARGB8888, a different device in the family |
+
+RGB565 for this panel, which matches the `ARGB8888_TO_RGB565_Thread` class in the binary and is what an
+on-device renderer would write to `/dev/fb0`.
 
 ### Running our own code on the device
 

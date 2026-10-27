@@ -60,7 +60,11 @@ Disk Management on a 3.75 GB card, against `sys_partition.fex`:
 | 32 MB volume | `boot-resource` `p1` | 32 MB | FAT — **the only one Windows mounts**, and what the device calls `/mnt/SDCARD` |
 | ~6 MB | `boot` `p4` | 6.2 MB | kernel (Android bootimg) |
 | 1.00 GB RAW | `rootfs` `p5` | 1.00 GB | ext4, the root filesystem |
-| 2.69 GB RAW | `UDISK` `p6` | 2.69 GB | ext4, the writable overlay — this is where `/data` really lives |
+| 2.69 GB RAW | `UDISK` `p6` | 2.69 GB | ext4, the writable overlay — **everything ScreenKey installed is here**: the running firmware, the theme, fonts, images |
+
+Partition 5's `/data` is the factory base and its content folders are all empty; its `KeyboardDevice` reports
+V2.29, the published image has V2.31, and the device reports V2.32. The running software is in the overlay,
+shadowing the empty originals. Read p6, not p5.
 
 `env` and `env-redund` (`p2`, `p3`, 252 KB each) are too small for Disk Management to draw. Every size
 matches `sys_partition.fex` exactly, so this is settled rather than inferred.
