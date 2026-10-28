@@ -91,6 +91,10 @@ and leaves `config.json` alone if it can't find `defaultTheme` in it. Each step 
 
 `upload` refuses a script with CRLF line endings: `#!/bin/sh\r` would silently never run.
 
+Once `lunch.sh` is on the card it stays there, so later tests need only the theme and an arm file.
+`theme-test-once-round2` arms `/data/theme/MK10/mk10test2/mk10test2.Theme`; upload it as
+`/mnt/SDCARD/theme-test-once`.
+
 ## Rules for anything you put in here
 
 `qt_app1` waits for this script to finish before the device starts its UI. So:

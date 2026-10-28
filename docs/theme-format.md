@@ -161,6 +161,26 @@ Also proven by the same run, all for the first time on hardware:
 Not yet tested: whether gauges, bars and state images (types 101, 102, 109, 114) take custom names the
 same way text does; non-numeric strings; how fast values can be pushed before the device falls behind.
 
+### Round 2: gauges, any string, and the push rate
+
+`theme-make-test STOCK OUT --round 2` changes four items on the start page's small screen:
+
+| Item | Stock | Round 2 | Tests |
+|---|---|---|---|
+| big top-left text, id 133 | `时` (the hour) | `mk10text` | any string: `OK`, `Hé`, `中文`, `Жж`, `ÆØ`, one too long to fit |
+| middle arc gauge, id 2 | `Cpu使用率` | `mk10level` | a custom name on a gauge (type 109) |
+| middle number, id 135 | `Gpu使用率` | `mk10count` | whether text keeps pace: one count per push |
+| middle label, id 138 | `GPU` | `RATE` | this theme is the one that loaded |
+
+`sysdata --test --round 2` pushes at 20 a second by default (`--every 0.02` for 50): CPU sweeping
+0 → 100 → 0 as the control (it drives the left and right arcs and the left number), `mk10level` sweeping the
+opposite way, `mk10count` counting, and `mk10text` changing every 2 s. It reports how many pushes went out
+and how many the device acknowledged, if any, with their round trip.
+
+The probe's serial reads normally wait up to 50 ms for input, which capped the first version of this loop at
+8 a second — it would have blamed the device for the tool's own limit. `sysdata` now polls without waiting
+and holds a fixed schedule; against the simulator it sustains 20.1 a second at the default and 50 when asked.
+
 ## What is still unknown
 
 - **The device's tolerance for a theme that differs more from stock.** An edited stock theme loads; a
