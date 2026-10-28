@@ -1433,6 +1433,11 @@ def cmd_upload(args):
     with open(args.file, "rb") as fh:
         data = fh.read()
     dest = args.dest or (PROBE_DIR + os.path.basename(args.file))
+    if data.startswith(b"#!") and b"\r\n" in data:
+        print("%s is a script with Windows (CRLF) line endings. On the device its first line would read" % args.file)
+        print("'#!/bin/sh\\r' and it would silently never run. Convert it to LF first - git checks out")
+        print("sdcard-tools/ with LF, so a fresh pull is the easy fix. Nothing was sent.")
+        return 1
     print("Local file: %s" % args.file)
     print("            %d bytes, crc32 %d" % (len(data), crc32(data)))
     print("Goes to:    %s" % dest)

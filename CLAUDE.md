@@ -59,6 +59,10 @@ format, and `docs/research-notes.md` for why things are the way they are.
   `UDISK` are all partitions of it, and `/data` lives on `UDISK`. Image the card before changing anything on
   it — that image is a complete, restorable firmware backup. Windows mounts only the 32 MB `boot-resource`
   partition, which is also what the device calls `/mnt/SDCARD`; it holds the boot resources and fills fast.
+- **Don't make the user pull the SD card.** The MK10's card slot spring may be wearing. Everything on the card
+  can be reached without removing it: `saveToFile` (`probe upload`) writes `/mnt/SDCARD` and `/data` directly,
+  and `lunch.sh` runs as root before the app starts. Prefer changes that revert themselves on the next boot —
+  `sdcard-tools/lunch-theme-test.sh` is the pattern.
 - Only one program can open the MK10's serial port. Quit OpenDeck, ScreenKey and MK10 Manager before using another.
 - **Ask the user first** before sending anything to a real device that writes or deletes files (`saveToFile`,
   `setFileCRC`, `deleteFiles`, V1 FILE_START/FILE_END outside `/data/mk10probe/`, DELETE_THEME) or updates firmware.

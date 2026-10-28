@@ -70,6 +70,27 @@ on the card, and it refuses to start with less than 64 MB free.
 If `report.txt` ends with `===== report complete =====`, nothing was lost. `df`, `/proc/partitions` and the
 card's own contents are near the top, so a space problem is visible immediately.
 
+## Trying a theme without touching the card: `lunch-theme-test.sh`
+
+Upload it as the card's `lunch.sh` and it gives a **one-boot theme switch that undoes itself**:
+
+```
+python mk10probe.py upload mk10test.Theme --dest /data/theme/MK10/mk10test/mk10test.Theme
+python mk10probe.py upload ../sdcard-tools/lunch-theme-test.sh --dest /mnt/SDCARD/lunch.sh
+python mk10probe.py upload ../sdcard-tools/theme-test-once --dest /mnt/SDCARD/theme-test-once
+```
+
+- **Next boot:** `config.json` is saved as `config.json.before-test`, its `defaultTheme` is pointed at the path
+  inside `theme-test-once`, and the arm file is deleted.
+- **The boot after:** `config.json` is copied back from the saved copy — byte-identical, checked.
+
+So any second power cycle undoes a test, including one that leaves the screen broken, and undoing it needs
+neither the card nor a working serial link. It refuses to switch if the theme file isn't on the device yet,
+and leaves `config.json` alone if it can't find `defaultTheme` in it. Each step is logged to
+`/mnt/SDCARD/theme-test.log`.
+
+`upload` refuses a script with CRLF line endings: `#!/bin/sh\r` would silently never run.
+
 ## Rules for anything you put in here
 
 `qt_app1` waits for this script to finish before the device starts its UI. So:
