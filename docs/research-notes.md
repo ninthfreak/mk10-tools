@@ -322,7 +322,30 @@ and a set of audio visualisers — `audioGuiRoundArc`, `audioGuiRoundPoint`, `au
 `audioGuiRectType1`, `audioGuiRoundType1`. Also `STM32CommunicationThread`, though `hardware.md` records the
 keyboard chip as a GD32.
 
-### Why the stock theme can't be had
+### The stock theme, found (October 2026)
+
+**It was on the SD card all along, on partition 6.** `/upper/data/theme/MK10/默认主题-微雪-20250926/默认主题-微雪.Theme`,
+13.2 MB. DiskInternals showed that partition as empty because its ext4 journal **needed recovery** — a dirty
+journal that read-only tools won't replay. `e2fsck` on a copy of the image replayed it and the whole overlay
+appeared: 517 files, ~148 MB.
+
+The format is in `docs/theme-format.md` and `mk10probe.py theme-read` parses it. In short: a Qt QDataStream
+container holding a `QMap<QString,QVariant>` header, a qint64-prefixed blob of **UTF-8 JSON**, and a
+`QMap<QString,QByteArray>` of 406 embedded assets.
+
+It settles the things we could not get at from the binary:
+
+- **Item geometry is `x`, `y`, `z`** — the keys I searched for and could not find, because they are short
+  and common and I was looking in the wrong string band.
+- **`type` is a number as a string**, `100`–`115`, which is why items are held in a `QMap<int, …>`.
+- **Every JSON value is a string**, numbers and booleans included.
+- **A key is just an item**, `type` `115`, with `row`, `col` and a base64 `controlData` holding its action.
+
+The sections below were written before the file was found. They were right that the format is JSON and
+mostly right about the vocabulary; they are kept because the reasoning is still how we would approach the
+next unknown.
+
+### Why the stock theme can't be had (superseded — see above)
 
 `theme-dig` over the whole 355 MB installer: the widget names are in there (they are in the firmware's symbol
 table — `FlipClock` 56 times, `CircularProgressBar` 94), but **no JSON object parses around any of them**, and

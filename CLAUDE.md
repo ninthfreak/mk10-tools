@@ -1,7 +1,8 @@
 # mk10-tools: notes for Claude Code
 
 Unofficial software for the Waveshare MK10 (10 LCD keys + a 240×296 small screen, one 896×304 canvas, USB serial).
-Read `docs/protocol.md` before touching device code, and `docs/research-notes.md` for why things are the way they are.
+Read `docs/protocol.md` before touching device code, `docs/theme-format.md` for the on-device theme
+format, and `docs/research-notes.md` for why things are the way they are.
 
 ## Layout
 
@@ -36,6 +37,8 @@ Read `docs/protocol.md` before touching device code, and `docs/research-notes.md
     installer or the extracted `KeyboardDevice` for the theme format's vocabulary, and `unpack FILE --out DIR`
     lists or extracts archives packed inside the installer, and `theme-dig FILE` hunts for the theme itself as
     plain JSON (the installer keeps some of its payload uncompressed — that is how the firmware is extracted).
+  - `theme-read FILE [--keys] [--out DIR]` is offline: it takes a `.Theme` apart — pages, items, every key's
+    action, and the embedded assets. **`docs/theme-format.md` is the format**, read off the stock theme.
   - `upload FILE [--dest PATH]` puts a file on the device the V2 way (`saveToFile` in 64 KB base64 chunks, then
     `setFileCRC`), defaulting to `/data/mk10probe/`; `delete PATH...` removes files. **Both write to the device**
     and ask you to type a word first. The probe refuses any write method until the running command unlocks it by

@@ -1629,6 +1629,159 @@ def theme_report(prog, show_all=False):
     print("\nIf a group above looks like the theme vocabulary, that is what a .Theme file is made of.")
 
 
+# ---------------------------------------------------------------- .Theme files
+#
+# Worked out from the stock theme on a real MK10 (默认主题-微雪-20250926). A .Theme is three
+# QDataStream pieces back to back, big-endian throughout:
+#
+#   1. QMap<QString,QVariant>   language (int), keyMacroValue (QByteArray), keyMacro (QByteArray)
+#   2. qint64 length, then that many bytes of UTF-8 JSON  - the theme proper
+#   3. QMap<QString,QByteArray> asset path -> file bytes, e.g. "/image/128x128/.../x.gif"
+#
+# QString is a u32 byte length then UTF-16BE; QByteArray is a u32 length then bytes, with
+# 0xFFFFFFFF meaning null; QVariant is a u32 type id, a 1-byte isNull flag, then the payload.
+
+QV_INT, QV_BYTEARRAY, QV_STRING = 2, 12, 10
+
+
+def _qstr_read(b, p):
+    n = struct.unpack_from(">I", b, p)[0]
+    p += 4
+    if n == 0xFFFFFFFF:
+        return "", p
+    return b[p:p + n].decode("utf-16-be"), p + n
+
+
+def _qbytes_read(b, p):
+    n = struct.unpack_from(">I", b, p)[0]
+    p += 4
+    if n == 0xFFFFFFFF:
+        return None, p
+    return b[p:p + n], p + n
+
+
+def _qvariant_read(b, p):
+    tid = struct.unpack_from(">I", b, p)[0]
+    p += 5                                  # type id, then the isNull byte
+    if tid == QV_INT:
+        return struct.unpack_from(">i", b, p)[0], p + 4
+    if tid == QV_BYTEARRAY:
+        return _qbytes_read(b, p)
+    if tid == QV_STRING:
+        return _qstr_read(b, p)
+    raise ValueError("QVariant type %d not handled at offset %d" % (tid, p - 5))
+
+
+def qvariant_map_read(b, p=0):
+    n = struct.unpack_from(">I", b, p)[0]
+    p += 4
+    out = {}
+    for _ in range(n):
+        k, p = _qstr_read(b, p)
+        v, p = _qvariant_read(b, p)
+        out[k] = v
+    return out, p
+
+
+def qbytes_map_read(b, p=0):
+    n = struct.unpack_from(">I", b, p)[0]
+    p += 4
+    out = {}
+    for _ in range(n):
+        k, p = _qstr_read(b, p)
+        v, p = _qbytes_read(b, p)
+        out[k] = v
+    return out, p
+
+
+def read_theme(data):
+    """-> (header dict, theme JSON as a dict, {asset path: bytes})."""
+    header, p = qvariant_map_read(data, 0)
+    length = struct.unpack_from(">q", data, p)[0]
+    p += 8
+    body = json.loads(data[p:p + length])
+    p += length
+    assets, p = qbytes_map_read(data, p)
+    return header, body, assets
+
+
+def decode_control_data(text):
+    """A key's controlData is base64 of the same QVariant map: what the key does when pressed."""
+    try:
+        return qvariant_map_read(base64.b64decode(text))[0]
+    except Exception as e:
+        return {"<undecodable>": str(e)}
+
+
+#: What the numeric item types turned out to be, from the stock theme's own items.
+ITEM_TYPES = {
+    "100": "image or video (path, w/h)",
+    "101": "circular bar (margin, radius)",
+    "102": "rectangular bar (corner_radius, gradient)",
+    "109": "arc gauge (angleMin/MaxValue, arcRadius)",
+    "111": "flip/digit display (displayNum, displayType, transition)",
+    "113": "text (text_str, text_font)",
+    "114": "state image (path + paths, system data picks the frame)",
+    "115": "KEY (row, col, controlData, title, soundFile)",
+}
+
+
+def cmd_theme_read(args):
+    """Offline: take a .Theme apart. No device needed."""
+    with open(args.file, "rb") as fh:
+        data = fh.read()
+    try:
+        header, body, assets = read_theme(data)
+    except Exception as e:
+        print("Couldn't read that as a .Theme: %s" % e)
+        print("First bytes: %s" % data[:32].hex(" "))
+        return 1
+
+    print("Header: %s" % {k: (("%d bytes" % len(v)) if isinstance(v, bytes) else v)
+                          for k, v in header.items()})
+    main = body.get("main") or {}
+    pages = body.get("pages") or []
+    print("Format version %s, %d page(s), current page %s"
+          % (main.get("version"), len(pages), main.get("currentPage")))
+    print("Assets: %d file(s), %.1f MB" % (len(assets), sum(len(v or b"") for v in assets.values()) / 1e6))
+
+    counts = collections.Counter(it.get("type") for p in pages for it in (p.get("items") or []))
+    print("\nItems by type:")
+    for t, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+        print("  %-5s x%-4d %s" % (t, n, ITEM_TYPES.get(t, "?")))
+
+    print("\nPages:")
+    for pg in pages:
+        items = pg.get("items") or []
+        keys = [i for i in items if i.get("type") == "115"]
+        canvas = pg.get("canvas") or {}
+        print("  %-38s %3d item(s), %2d key(s)   canvas %sx%s"
+              % (pg.get("pageName"), len(items), len(keys),
+                 canvas.get("canvas_w", "?"), canvas.get("canvas_h", "?")))
+        if args.keys:
+            for k in sorted(keys, key=lambda k: (k.get("row"), k.get("col"))):
+                action = decode_control_data(k.get("controlData") or "")
+                print("      r%sc%s %-18s -> %s" % (
+                    k.get("row"), k.get("col"), k.get("title"),
+                    action.get("type") or ", ".join(sorted(action)) or "(nothing)"))
+
+    if args.out:
+        os.makedirs(args.out, exist_ok=True)
+        with open(os.path.join(args.out, "theme.json"), "w", encoding="utf-8") as fh:
+            json.dump(body, fh, ensure_ascii=False, indent=2)
+        written = 0
+        for path, blob in assets.items():
+            if blob is None:
+                continue
+            dest = os.path.join(args.out, "assets", path.lstrip("/"))
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "wb") as fh:
+                fh.write(blob)
+            written += 1
+        print("\nWrote theme.json and %d asset(s) to %s" % (written, args.out))
+    return 0
+
+
 def cmd_theme_strings(args):
     """Read a ScreenKey installer or the device program and print everything that looks theme-shaped."""
     try:
@@ -1878,6 +2031,27 @@ def cmd_selftest(_args):
         nonlocal ok
         print("  %s  %s" % ("PASS" if cond else "FAIL", name))
         ok = ok and cond
+
+    def qstr(t):
+        b = t.encode("utf-16-be")
+        return struct.pack(">I", len(b)) + b
+
+    def qbytes(b):
+        return struct.pack(">I", len(b)) + b
+
+    # Build a miniature .Theme the way a real one is laid out, then read it back.
+    body = b'{"main":{"version":"V3.0","currentPage":"p1"},"pages":[{"pageName":"p1","items":[]}]}'
+    theme = (struct.pack(">I", 1) + qstr("language") + struct.pack(">IB i", 2, 0, 7)[:9]
+             + struct.pack(">q", len(body)) + body
+             + struct.pack(">I", 1) + qstr("/image/x.png") + qbytes(b"\x89PNG"))
+    hdr, parsed, assets = read_theme(theme)
+    check("a .Theme header decodes", hdr == {"language": 7})
+    check("a .Theme's JSON decodes", parsed["main"]["version"] == "V3.0")
+    check("a .Theme's assets decode", assets == {"/image/x.png": b"\x89PNG"})
+    check("key controlData decodes",
+          decode_control_data(base64.b64encode(
+              struct.pack(">I", 1) + qstr("type") + struct.pack(">IB", 10, 0)
+              + qstr("openPage")).decode()) == {"type": "openPage"})
 
     print("Packet self-test (no device needed)")
     check("CRC-32 matches the standard check value", crc32(b"123456789") == 0xCBF43926)
@@ -2237,6 +2411,10 @@ def main():
                                              "for the theme format (no device needed)")
     p.add_argument("file", help="the ScreenKey installer .exe, or an extracted KeyboardDevice")
     p.add_argument("--all", action="store_true", help="print more of each group")
+    p = sub.add_parser("theme-read", help="offline: take a .Theme file apart (no device needed)")
+    p.add_argument("file", help="a .Theme file, e.g. from /data/theme/MK10/<folder>/ on the SD card")
+    p.add_argument("--out", help="folder to write theme.json and the embedded assets into")
+    p.add_argument("--keys", action="store_true", help="also list every key and what it does")
     p = sub.add_parser("theme-dig", help="offline: hunt for the theme file itself inside an installer")
     p.add_argument("file", help="the ScreenKey installer .exe")
     p.add_argument("--out", help="folder to save what it finds")
@@ -2279,7 +2457,7 @@ def main():
         sys.stdout.reconfigure(errors="replace")
     except (AttributeError, ValueError):
         pass
-    if args.cmd not in ("selftest", "theme-strings", "unpack", "theme-dig"):
+    if args.cmd not in ("selftest", "theme-strings", "unpack", "theme-dig", "theme-read"):
         try:
             import serial  # noqa: F401
         except ImportError:
@@ -2288,7 +2466,7 @@ def main():
                "backlight": cmd_backlight, "show-test": cmd_show_test, "storage": cmd_storage,
                "send-test": cmd_send_test, "update": cmd_update, "explore": cmd_explore,
                "pixmap": cmd_pixmap, "files": cmd_files, "theme-strings": cmd_theme_strings,
-               "unpack": cmd_unpack, "theme-dig": cmd_theme_dig,
+               "unpack": cmd_unpack, "theme-dig": cmd_theme_dig, "theme-read": cmd_theme_read,
                "upload": cmd_upload, "delete": cmd_delete}[args.cmd]
     sys.exit(handler(args))
 
