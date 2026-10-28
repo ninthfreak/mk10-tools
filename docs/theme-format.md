@@ -235,6 +235,14 @@ used for child pages (folders), which carry `parentPageName`; `oneLevelUp` retur
 `themePageSwitch`, `pageSwitch`, `jumpToPage`, `openPage` and `oneLevelUp` sit beside `videoplayer.cpp` with the
 other key-action names: page switching is something the device does **when its own key is pressed**.
 
+### Reloading from the host
+
+`mk10probe.py reload` asked a real V2.32 to load the round-2 test theme with V1 `RELOAD`, laying the path out
+three ways. The device sent **nothing back to any of them** and the screen didn't change, where every live-data
+push gets an acknowledgement within milliseconds. So as far as we can tell the host can neither switch pages
+nor reload a theme; changing which theme is shown takes `config.json` and a restart, which
+`lunch-theme-test.sh` already does without removing the card.
+
 ### `/data/info/ThemeMessage`
 
 A `QMap<QString,QString>` register of installed themes, path → CRC32. On this unit it holds one entry, the
