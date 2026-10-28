@@ -172,6 +172,21 @@ same way text does; non-numeric strings; how fast values can be pushed before th
 | middle number, id 135 | `Gpu使用率` | `mk10count` | whether text keeps pace: one count per push |
 | middle label, id 138 | `GPU` | `RATE` | this theme is the one that loaded |
 
+**Result (October 2026, real MK10, V2.32)** — partly in:
+
+| | Result |
+|---|---|
+| Theme loaded (`RATE` shown) | **yes** |
+| Text keeps pace at 20 a second | **yes** — the middle number ended on exactly the last value sent (1201) and stopped when the probe did. No backlog |
+| Device acknowledges `SEND_SYSTEM_DATA` | **yes, every one** — 1201 of 1201, round trip **6 ms** median and 6 ms at the 95th percentile |
+| Arc gauges (type 109) move | **no — not even the control** bound to the built-in `Cpu使用率`. So it isn't the custom name; gauges don't take pushed values the way text does, or need something else. Cause unknown |
+| Any string displays | inconclusive — the text changed, but appeared to draw over itself and its neighbours. The big hour item is about 65 px wide before the colon and minutes beside it, so anything wider than two digits overlaps them; whether old text is also left behind needs a photo |
+| Key presses reach the host while a theme runs | not yet answered |
+
+The acknowledgement matters as much as the rate. A pushed value costs the device ~6 ms, against ~29 ms to
+decode a whole-canvas JPEG, and because every push is acknowledged the host can pace values exactly as it
+already paces frames — send the next when the last is acknowledged.
+
 `sysdata --test --round 2` pushes at 20 a second by default (`--every 0.02` for 50): CPU sweeping
 0 → 100 → 0 as the control (it drives the left and right arcs and the left number), `mk10level` sweeping the
 opposite way, `mk10count` counting, and `mk10text` changing every 2 s. It reports how many pushes went out

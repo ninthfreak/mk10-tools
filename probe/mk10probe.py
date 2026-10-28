@@ -2478,6 +2478,7 @@ class SimulatedMK10(threading.Thread):
             first = sorted(m.items())[0] if m else (None, None)       # QMap begin() = smallest key
             if pkt.cmd == V1_SEND_SYSTEM_DATA:
                 self.system_data.update(m)          # remembered so tests can see what arrived
+                self.ack(pkt.cmd, None)             # a real V2.32 acknowledges every one (~6 ms); payload unknown
                 return
             if pkt.cmd == V1_FIND_DEVICE:
                 self.connected = True
