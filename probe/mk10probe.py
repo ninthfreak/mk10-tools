@@ -75,6 +75,7 @@ CMD_NAMES = {0: "FIND_DEVICE", 1: "SEND_SYSTEM_DATA", 2: "RELOAD", 3: "GET_THEME
              10: "GET_SCREEN_MESSAGE", 11: "DELETE_THEME", 12: "SEND_PIXMAP", 13: "DEVICE_CMD",
              14: "REQUEST_UPLOAD_KEY", 15: "SEND_JSON", 100: "SHOW_JPG", 101: "JSON"}
 V1_FIND_DEVICE = 0
+V1_SEND_SYSTEM_DATA = 1  # payload QMap<QString,QString>: live data name -> value
 V1_GET_THEME = 3          # reply: theme files + storage (MB)
 V1_FILE_START = 6         # payload {device_path: size}
 V1_FILE_END = 7           # payload {device_path: crc32 as decimal}; reply {"res": "1"/"0", "fileName": path}
@@ -453,6 +454,7 @@ class Link:
         self.ser.rts = dtr
         self.ser.open()
         self.parser = FrameParser()
+        self._pending = []          # packets read alongside one wait_for matched, kept for the next poll
         self.unlocked = set()       # write methods this command has been given permission for
         self.log = log
         self.seq = 1
@@ -507,8 +509,8 @@ class Link:
             self.log.note("TX-RAW %d bytes sha256=%s" % (len(data), hashlib.sha256(data).hexdigest()))
 
     def poll(self, show_junk=True):
+        got, self._pending = self._pending, []
         data = self.ser.read(4096)
-        got = []
         if data:
             self.rx_total += len(data)
             self.log.raw_rx(data)
@@ -524,10 +526,14 @@ class Link:
         return got
 
     def wait_for(self, match, timeout=3.0, on_other=None):
+        """Wait for one packet. Anything that arrived in the same read after it is kept for the next
+        poll - it used to be dropped, which lost a live-data request sent straight after a reply."""
         end = time.time() + timeout
         while time.time() < end:
-            for pkt in self.poll():
+            pkts = self.poll()
+            for i, pkt in enumerate(pkts):
                 if match(pkt):
+                    self._pending = pkts[i + 1:] + self._pending
                     return pkt
                 if on_other:
                     on_other(pkt)
@@ -1694,15 +1700,74 @@ def qbytes_map_read(b, p=0):
     return out, p
 
 
-def read_theme(data):
-    """-> (header dict, theme JSON as a dict, {asset path: bytes})."""
+def split_theme(data):
+    """-> (header dict, raw JSON bytes, {asset path: bytes}, trailing bytes).
+
+    The stock theme ends with four zero bytes after the asset map - most likely an empty fourth map
+    it doesn't use. Kept as-is so a file can be rewritten byte for byte."""
     header, p = qvariant_map_read(data, 0)
     length = struct.unpack_from(">q", data, p)[0]
     p += 8
-    body = json.loads(data[p:p + length])
+    raw = data[p:p + length]
     p += length
     assets, p = qbytes_map_read(data, p)
-    return header, body, assets
+    return header, raw, assets, data[p:]
+
+
+def read_theme(data):
+    """-> (header dict, theme JSON as a dict, {asset path: bytes})."""
+    header, raw, assets, _tail = split_theme(data)
+    return header, json.loads(raw), assets
+
+
+def _qvariant_write(v):
+    if v is None:                     # how the stock theme stores an empty keyMacro
+        return struct.pack(">IB", QV_BYTEARRAY, 0) + _qbytes(None)
+    if isinstance(v, bool):
+        raise TypeError("bool QVariants aren't used in themes")
+    if isinstance(v, int):
+        return struct.pack(">IBi", QV_INT, 0, v)
+    if isinstance(v, (bytes, bytearray)):
+        return struct.pack(">IB", QV_BYTEARRAY, 0) + _qbytes(bytes(v))
+    if isinstance(v, str):
+        return struct.pack(">IB", QV_STRING, 0) + _qstr(v)
+    raise TypeError("can't write %r as a QVariant" % type(v))
+
+
+def join_theme(header, raw_json, assets, trailer=b"\0\0\0\0"):
+    """The inverse of split_theme. Maps are written in the order given, so a split-then-join of a
+    real file is byte-identical; the device reads them into a QMap, which doesn't care about order."""
+    out = [struct.pack(">I", len(header))]
+    for k, v in header.items():
+        out.append(_qstr(k) + _qvariant_write(v))
+    out.append(struct.pack(">q", len(raw_json)))
+    out.append(raw_json)
+    out.append(struct.pack(">I", len(assets)))
+    for k, v in assets.items():
+        out.append(_qstr(k) + _qbytes(v))
+    out.append(trailer)
+    return b"".join(out)
+
+
+def _qt_json(v, level):
+    ind, ind1 = "    " * level, "    " * (level + 1)
+    if isinstance(v, dict):
+        if not v:
+            return "{\n" + ind + "}"
+        return ("{\n" + ",\n".join(ind1 + json.dumps(k, ensure_ascii=False) + ": " + _qt_json(x, level + 1)
+                                    for k, x in v.items()) + "\n" + ind + "}")
+    if isinstance(v, list):
+        if not v:
+            return "[\n" + ind + "]"
+        return "[\n" + ",\n".join(ind1 + _qt_json(x, level + 1) for x in v) + "\n" + ind + "]"
+    return json.dumps(v, ensure_ascii=False)
+
+
+def theme_json_bytes(body):
+    """Serialise theme JSON exactly as Qt's QJsonDocument::Indented does - 4-space indent, empty
+    arrays and objects split across two lines, a trailing newline. Checked byte-identical against
+    the stock theme, so an edited theme differs from stock only where it was edited."""
+    return (_qt_json(body, 0) + "\n").encode("utf-8")
 
 
 def decode_control_data(text):
@@ -1779,6 +1844,131 @@ def cmd_theme_read(args):
                 fh.write(blob)
             written += 1
         print("\nWrote theme.json and %d asset(s) to %s" % (written, args.out))
+    return 0
+
+
+#: The custom name the test theme binds an item to. Nothing in the firmware knows this name.
+TEST_DATA_NAME = "mk10test"
+
+
+def make_test_theme(body):
+    """Change exactly two things on the start page, so a result can't be blamed on anything else:
+
+    - the static label under the middle gauge says TEST instead of GPU (proves THIS theme loaded)
+    - the number above it is bound to TEST_DATA_NAME instead of Gpu使用率 (the actual question)
+
+    The CPU number beside it is left alone as the control: if pushing Cpu使用率 moves it, the push
+    format is right, whatever the custom name does."""
+    start = body["main"]["currentPage"]
+    page = next(pg for pg in body["pages"] if pg["pageName"] == start)
+    changed = []
+    for it in page["items"]:
+        if it.get("type") == "113" and it.get("text_str") == "GPU" and it.get("system_data_flag") == "0":
+            it["text_str"] = "TEST"
+            changed.append("label id %s: GPU -> TEST" % it["id"])
+        elif (it.get("type") == "113" and it.get("system_data_flag") == "1"
+              and it.get("system_data_name") == "Gpu使用率"):
+            it["system_data_name"] = TEST_DATA_NAME
+            changed.append("value id %s: Gpu使用率 -> %s" % (it["id"], TEST_DATA_NAME))
+    return changed
+
+
+def cmd_theme_make_test(args):
+    """Offline: build the custom-data-name test theme from the stock one."""
+    with open(args.stock, "rb") as fh:
+        data = fh.read()
+    header, raw, assets, tail = split_theme(data)
+    if join_theme(header, raw, assets, tail) != data:
+        print("Rewriting the stock theme unchanged did NOT reproduce it byte for byte, so the writer")
+        print("is wrong somewhere. Stopping rather than build a test on a broken writer.")
+        return 1
+    print("Writer check: the stock theme rewrites byte-identical (%d bytes)." % len(data))
+    body = json.loads(raw)
+    if theme_json_bytes(body) != raw:
+        print("Re-serialising the stock JSON did NOT reproduce it byte for byte, so the test theme")
+        print("would differ from stock in formatting as well as content. Stopping.")
+        return 1
+    print("JSON check:   the stock JSON re-serialises byte-identical (%d bytes)." % len(raw))
+
+    changed = make_test_theme(body)
+    if len(changed) != 2:
+        print("Expected to change 2 items on the start page and changed %d: %s" % (len(changed), changed))
+        print("This isn't the theme the test was designed against. Stopping.")
+        return 1
+    out = join_theme(header, theme_json_bytes(body), assets, tail)
+    with open(args.out, "wb") as fh:
+        fh.write(out)
+
+    # Read it back with the same code the device-facing tools use, and check nothing else moved.
+    _h, back, _a = read_theme(out)
+    before = json.loads(raw)
+    make_test_theme(before)
+    same = back == before
+    print("Changed:")
+    for c in changed:
+        print("  " + c)
+    print("Wrote %s (%d bytes). Reads back: %s; everything else unchanged: %s"
+          % (args.out, len(out), "yes", "yes" if same else "NO"))
+    return 0 if same else 1
+
+
+def cmd_sysdata(args):
+    """Push live values the way ScreenKey does (V1 cmd 1), and print what the device asks for (cmd 15)."""
+    link = open_link(args)
+    try:
+        info = v1_handshake(link)
+        if info is None:
+            print("No answer to FIND_DEVICE. Is something else holding the port? Nothing was sent.")
+            return 1
+        print("Device: %s, firmware %s" % (info.get("screen_model", "?"), info.get("version", "?")))
+
+        fixed = {}
+        for pair in args.value or []:
+            if "=" not in pair:
+                sys.exit("Values look like NAME=VALUE, got %r" % pair)
+            k, v = pair.split("=", 1)
+            fixed[k] = v
+
+        print("\nPushing every %.1f s for %d s. Watch the small screen." % (args.every, args.seconds))
+        if args.test:
+            print("  Cpu使用率 (the control)  : 11, 22, 33 ... 99, repeating - under the CPU label")
+            print("  %-22s : 1, 2, 3 ...                     - under the TEST label" % TEST_DATA_NAME)
+        print("  Anything the device asks for appears below as 'wants live data'.\n")
+
+        asked = set()
+        n = 0
+        end = time.time() + args.seconds
+        next_send = 0.0
+        while time.time() < end:
+            if time.time() >= next_send:
+                n += 1
+                fields = dict(fixed)
+                if args.test:
+                    fields["Cpu使用率"] = str(11 * (1 + (n - 1) % 9))
+                    fields[TEST_DATA_NAME] = str(n)
+                link.send_v1(V1_SEND_SYSTEM_DATA, fields)
+                print("  sent #%-3d %s" % (n, ", ".join("%s=%s" % kv for kv in sorted(fields.items()))))
+                next_send = time.time() + args.every
+            for pkt in link.poll(show_junk=False):
+                d = describe(pkt)
+                if pkt.proto == "v1" and pkt.cmd == 15 and isinstance(d, dict):
+                    names = d.get("deviceRequestSystemData") or []
+                    new = [x for x in names if x not in asked]
+                    asked.update(names)
+                    if new:
+                        print("  >> device wants live data: %s" % ", ".join(
+                            "%s (%s)" % (x, DATA_NAMES.get(x, "custom" if x == TEST_DATA_NAME else "?"))
+                            for x in new))
+                elif key_event(pkt):
+                    print_event(pkt)
+            time.sleep(0.02)
+
+        print("\nThe device asked for: %s" % (", ".join(sorted(asked)) or "nothing"))
+        if args.test:
+            print("Asked for %s by name: %s" % (TEST_DATA_NAME, "YES" if TEST_DATA_NAME in asked else "no"))
+        print("Log: %s" % link.log.path)
+    finally:
+        link.close()
     return 0
 
 
@@ -2048,6 +2238,10 @@ def cmd_selftest(_args):
     check("a .Theme header decodes", hdr == {"language": 7})
     check("a .Theme's JSON decodes", parsed["main"]["version"] == "V3.0")
     check("a .Theme's assets decode", assets == {"/image/x.png": b"\x89PNG"})
+    check("a .Theme rewrites byte-identical", join_theme(*split_theme(theme)) == theme)
+    check("theme JSON is written the way Qt writes it",
+          theme_json_bytes({"a": [], "b": {}, "c": ["x"]})
+          == b'{\n    "a": [\n    ],\n    "b": {\n    },\n    "c": [\n        "x"\n    ]\n}\n')
     check("key controlData decodes",
           decode_control_data(base64.b64encode(
               struct.pack(">I", 1) + qstr("type") + struct.pack(">IB", 10, 0)
@@ -2184,6 +2378,7 @@ class SimulatedMK10(threading.Thread):
         self.remaining, self.file_path, self.file_buf, self.last_crc = 0, None, bytearray(), 0
         self.files = {}
         self.partial = {}          # V2 uploads in progress: path -> bytes so far, committed by setFileCRC
+        self.system_data = {}      # the last value pushed for each live-data name
         self.installed = None
 
     def reply(self, seq, obj):
@@ -2198,11 +2393,18 @@ class SimulatedMK10(threading.Thread):
                 return
             m = qmap_decode(pkt.payload) or {}
             first = sorted(m.items())[0] if m else (None, None)       # QMap begin() = smallest key
+            if pkt.cmd == V1_SEND_SYSTEM_DATA:
+                self.system_data.update(m)          # remembered so tests can see what arrived
+                return
             if pkt.cmd == V1_FIND_DEVICE:
                 self.connected = True
                 self.ack(pkt.cmd, {"version": self.version, "upgradeToLatestMethod": "1",
                                    "screen_width": "896", "screen_height": "304", "screen_model": "MK10",
                                    "deviceName": "ScreenKey", "deviceBl": "93", "deviceVolume": "7"})
+                # A theme page announces the live data it shows. Built-in names only: the simulator
+                # must not pretend to know whether the real firmware honours a custom one.
+                os.write(self.fd, build_frame_v1(15, json.dumps(
+                    {"deviceRequestSystemData": ["时", "分", "Cpu使用率"]}).encode(), 2))
             elif pkt.cmd == V1_GET_VERSION:
                 self.ack(pkt.cmd, {"version": self.version})
             elif pkt.cmd == V1_GET_THEME:
@@ -2415,6 +2617,16 @@ def main():
     p.add_argument("file", help="a .Theme file, e.g. from /data/theme/MK10/<folder>/ on the SD card")
     p.add_argument("--out", help="folder to write theme.json and the embedded assets into")
     p.add_argument("--keys", action="store_true", help="also list every key and what it does")
+    p = sub.add_parser("theme-make-test", help="offline: build the custom-data-name test theme")
+    p.add_argument("stock", help="the stock .Theme to start from")
+    p.add_argument("out", help="where to write the test theme")
+    p = sub.add_parser("sysdata", help="push live data to the theme (V1 cmd 1) and show what it asks for")
+    common(p)
+    p.add_argument("--test", action="store_true",
+                   help="push the experiment's values: Cpu使用率 (control) and %s (custom)" % "mk10test")
+    p.add_argument("--value", action="append", help="NAME=VALUE to push (repeatable)")
+    p.add_argument("--seconds", type=int, default=60)
+    p.add_argument("--every", type=float, default=1.0, help="seconds between pushes")
     p = sub.add_parser("theme-dig", help="offline: hunt for the theme file itself inside an installer")
     p.add_argument("file", help="the ScreenKey installer .exe")
     p.add_argument("--out", help="folder to save what it finds")
@@ -2457,7 +2669,7 @@ def main():
         sys.stdout.reconfigure(errors="replace")
     except (AttributeError, ValueError):
         pass
-    if args.cmd not in ("selftest", "theme-strings", "unpack", "theme-dig", "theme-read"):
+    if args.cmd not in ("selftest", "theme-strings", "unpack", "theme-dig", "theme-read", "theme-make-test"):
         try:
             import serial  # noqa: F401
         except ImportError:
@@ -2467,6 +2679,7 @@ def main():
                "send-test": cmd_send_test, "update": cmd_update, "explore": cmd_explore,
                "pixmap": cmd_pixmap, "files": cmd_files, "theme-strings": cmd_theme_strings,
                "unpack": cmd_unpack, "theme-dig": cmd_theme_dig, "theme-read": cmd_theme_read,
+               "theme-make-test": cmd_theme_make_test, "sysdata": cmd_sysdata,
                "upload": cmd_upload, "delete": cmd_delete}[args.cmd]
     sys.exit(handler(args))
 

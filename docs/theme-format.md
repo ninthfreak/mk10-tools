@@ -99,10 +99,52 @@ python probe/mk10probe.py theme-read FILE --out DIR  # write theme.json and all 
 
 Offline, no device needed.
 
+## Writing one
+
+`join_theme` in the probe is the inverse of `split_theme`, and `theme_json_bytes` serialises the JSON the
+way Qt's `QJsonDocument::Indented` does — 4-space indent, empty arrays and objects split across two lines,
+a trailing newline. Both are checked against the stock theme and reproduce it **byte for byte**: the
+container (13,213,899 bytes) and the JSON alone (196,304 bytes). So an edited theme differs from the stock
+one only where it was edited.
+
+Qt writes a `QMap` in **descending** key order, which is why the header reads `language`, `keyMacroValue`,
+`keyMacro`. The device reads maps back into a `QMap`, so order doesn't matter to it; the writer keeps
+whatever order it was given so round trips stay exact.
+
+## The custom-data-name experiment
+
+Live data reaches a theme over V1: the device sends cmd 15 naming what its page shows
+(`deviceRequestSystemData`), and the host answers with cmd 1 `SEND_SYSTEM_DATA`, a
+`QMap<QString,QString>` of name → value. The stock theme only uses the firmware's own names (`时`,
+`Cpu使用率` …). Whether the host can feed a name **it chooses** decides whether a theme can show
+the manager's state — mute, levels, Slack, track titles — or only PC stats.
+
+`mk10probe.py theme-make-test STOCK OUT` builds the test from the stock theme by changing exactly two items
+on the start page's small screen:
+
+| Item | Stock | Test | What it shows |
+|---|---|---|---|
+| label, id 138 | `GPU` | `TEST` | the test theme is the one that loaded |
+| value, id 135 | bound to `Gpu使用率` | bound to `mk10test` | **the question** |
+| value, id 134 | bound to `Cpu使用率` | unchanged | the control |
+
+`mk10probe.py sysdata --test` then pushes `Cpu使用率` cycling 11…99 and `mk10test` counting 1, 2, 3, and
+prints any cmd 15 the device sends.
+
+| TEST label | CPU number moves | TEST number moves | Means |
+|---|---|---|---|
+| no | — | — | the theme didn't load; nothing else is learned |
+| yes | no | no | our push format is wrong; the question is still open |
+| yes | yes | no | **only built-in names work** |
+| yes | yes | yes | **custom names work** |
+
+If the device's cmd 15 lists `mk10test` by name, that is strong evidence on its own: it means the device
+took the name from the theme and is asking the host for it.
+
 ## What is still unknown
 
-- **Writing one.** The reader is verified against the stock theme; nothing writes a `.Theme` yet, and the
-  device's tolerance for a hand-made one is untested.
+- **The device's tolerance for an edited theme.** The writer is exact, but nothing written by it has been
+  loaded on hardware yet.
 - **Whether the device reloads a theme** without a reboot, and what `DELETE_THEME` (V1 cmd 11) does.
 - Item types other than the eight above. The firmware has more widget factories than the stock theme uses —
   audio visualisers and a line chart among them — so there are type numbers we have not seen.

@@ -39,6 +39,9 @@ format, and `docs/research-notes.md` for why things are the way they are.
     plain JSON (the installer keeps some of its payload uncompressed — that is how the firmware is extracted).
   - `theme-read FILE [--keys] [--out DIR]` is offline: it takes a `.Theme` apart — pages, items, every key's
     action, and the embedded assets. **`docs/theme-format.md` is the format**, read off the stock theme.
+  - `theme-make-test STOCK OUT` (offline) builds the custom-data-name test theme; `sysdata --test` pushes live
+    data to a loaded theme over V1 cmd 1 and prints what the device asks for (cmd 15). The writer
+    (`join_theme`, `theme_json_bytes`) reproduces the stock theme byte for byte — keep it that way.
   - `upload FILE [--dest PATH]` puts a file on the device the V2 way (`saveToFile` in 64 KB base64 chunks, then
     `setFileCRC`), defaulting to `/data/mk10probe/`; `delete PATH...` removes files. **Both write to the device**
     and ask you to type a word first. The probe refuses any write method until the running command unlocks it by
