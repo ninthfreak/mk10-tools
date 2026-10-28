@@ -178,10 +178,10 @@ same way text does; non-numeric strings; how fast values can be pushed before th
 |---|---|
 | Theme loaded (`RATE` shown) | **yes** |
 | Text keeps pace at 20 a second | **yes** — the middle number ended on exactly the last value sent (1201) and stopped when the probe did. No backlog |
-| Device acknowledges `SEND_SYSTEM_DATA` | **yes, every one** — 1201 of 1201, round trip **6 ms** median and 6 ms at the 95th percentile |
+| Device acknowledges `SEND_SYSTEM_DATA` | **yes, every one** — 1201 of 1201 as an empty V1 ACK with the same cmd. Round trip 6 ms median, 7 ms at the 99th percentile, **11 ms worst**; acknowledgements came every 50 ms like the pushes, never more than 56 ms apart. No malformed bytes in 60 s |
 | Arc gauges (type 109) move | **no — not even the control** bound to the built-in `Cpu使用率`. So it isn't the custom name; gauges don't take pushed values the way text does, or need something else. Cause unknown |
 | Any string displays | inconclusive — the text changed, but appeared to draw over itself and its neighbours. The big hour item is about 65 px wide before the colon and minutes beside it, so anything wider than two digits overlaps them; whether old text is also left behind needs a photo |
-| Key presses reach the host while a theme runs | not yet answered |
+| Key presses reach the host while a theme runs | **yes** — both middle keys, down and up, as the usual V2 `keyStateChanged`. So the manager keeps its key actions with a theme loaded |
 
 The acknowledgement matters as much as the rate. A pushed value costs the device ~6 ms, against ~29 ms to
 decode a whole-canvas JPEG, and because every push is acknowledged the host can pace values exactly as it

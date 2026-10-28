@@ -223,7 +223,7 @@ acknowledgement with the same cmd number.
 | 12 | SEND_PIXMAP | Named JPEGs, `QMap<QString,QByteArray>`. Tried on a real V2.32 device with no theme installed: every name acknowledged with an **empty payload and no visible change**. Looks theme-scoped and useless while the host drives the screen with cmd 100 |
 | 13 | DEVICE_CMD | Device to host: key events on V2.29 (firmware name `ProactiveEscalationCMD`) |
 | 14 | REQUEST_UPLOAD_KEY | |
-| 15 | SEND_JSON | Device to host: the theme asks for live data (`deviceRequestSystemData`). From the firmware decode; **not seen** from a real V2.32 device, which takes cmd 1 values unasked |
+| 15 | SEND_JSON | Device to host. Seen on a real V2.32: `{"deviceMessage": {"deviceBl": 30}}`, sent unprompted, as a type-2 packet, alongside the first key press of a session. Also, from the firmware decode: the theme asks for live data (`deviceRequestSystemData`). From the firmware decode; **not seen** from a real V2.32 device, which takes cmd 1 values unasked |
 
 V2.29 key events arrive as cmd 13 with a `QList<QMap<QString,QVariant>>`:
 `[{type: "keyState", row, col, pressed}, {the device's own configured action for that key}]`.
