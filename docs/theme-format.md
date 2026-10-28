@@ -219,8 +219,28 @@ among **top-level pages** — those with no `parentPageName`. In the stock theme
 Clock → 3 land on the right pages only under that reading. `openPage` instead names its target by UUID and is
 used for child pages (folders), which carry `parentPageName`; `oneLevelUp` returns from one.
 
-Nothing found so far lets the **host** switch pages. The firmware has `themePageSwitch`, `pageSwitch` and
-`onThemeFileSwitchPage`, but they read as the theme's own vocabulary; no V1 command is page-related.
+**The host has no page-switch command** — about 80% confidence, from three places:
+
+- **V1:** the firmware names its own commands (`CMD_VALUE_FIND_DEVICE`, `…_SEND_SYSTEM_DATA_TO_DEVICE`,
+  `…_SET_DEVICE_RELOAD`, `…_GET_DEVICE_THEME`, `…_SET_DEVICE_BL`, `…_SET_DEVICE_SCAN_STATE`, `…_FILE_START`,
+  `…_FILE_END`, `…_GET_DEVICE_VERSION`, `…_SET_DEVICE_CANVASFLIP`, `…_GET_DEVICE_SCREENMESSAGE`,
+  `…_SET_DEVICE_DELETE_THEME`, `…_SEND_PIXMAP`, `…_DEVICE_ProactiveEscalationCMD`, `…_REQUEST_UPLOAD_KEY`,
+  `…_SEND_JSON`, plus `…_JSON` and `…_SHOW_JPG` in V2.31). That is our table, complete, and none switches pages.
+- **V2:** the device lists its ten JSON methods itself; none does.
+- **JSON over V1 cmd 15:** the keys beside the serial code are device settings, mouse control, Wi-Fi and the
+  keyboard chip (`setDeviceName`, `controlMouse`, `connect`/`wifissid`, `qmk_string`, `bootloader_jump`,
+  `globalStatusUpdate`, `uploadAllState`). Inferred from how the strings cluster, so the least certain of the
+  three. **`bootloader_jump` and the Wi-Fi keys must never be sent.**
+
+`themePageSwitch`, `pageSwitch`, `jumpToPage`, `openPage` and `oneLevelUp` sit beside `videoplayer.cpp` with the
+other key-action names: page switching is something the device does **when its own key is pressed**.
+
+### `/data/info/ThemeMessage`
+
+A `QMap<QString,QString>` register of installed themes, path → CRC32. On this unit it holds one entry, the
+stock theme, with `2256378079` — exactly the stock `.Theme`'s CRC32. Themes put in place with `saveToFile`
+are not in it and load anyway, so it is bookkeeping (most likely what V1 `GET_THEME` reports), not a
+requirement for loading.
 
 `sysdata --stock` pushes every name the stock theme uses (the PC's real time and date, and CPU, GPU and RAM
 usage and temperatures each sweeping at a different speed), so the stock pages — PC Perf's bars and
