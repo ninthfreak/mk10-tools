@@ -1878,6 +1878,33 @@ def make_test_theme(body):
     return changed
 
 
+#: Round 2: gauges, any string, and the push rate. Item ids are the stock start page's.
+ROUND2 = {
+    "133": ("mk10text", None),    # the big hour at top left: strings
+    "135": ("mk10count", None),   # middle number: a counter, to see whether text keeps pace
+    "2":   ("mk10level", None),   # middle arc gauge: a custom name on a gauge, swept
+    "138": (None, "RATE"),        # middle label: proves this theme is the one that loaded
+}
+ROUND2_STRINGS = ["OK", "Hé", "中文", "Жж", "ÆØ", "A title too long to fit"]
+
+
+def make_test_theme_2(body):
+    start = body["main"]["currentPage"]
+    page = next(pg for pg in body["pages"] if pg["pageName"] == start)
+    changed = []
+    for it in page["items"]:
+        if it["id"] not in ROUND2:
+            continue
+        name, text = ROUND2[it["id"]]
+        if name:
+            changed.append("id %s (type %s): %s -> %s" % (it["id"], it["type"], it.get("system_data_name"), name))
+            it["system_data_name"] = name
+        if text:
+            changed.append("id %s (type %s): text %r -> %r" % (it["id"], it["type"], it.get("text_str"), text))
+            it["text_str"] = text
+    return changed
+
+
 def cmd_theme_make_test(args):
     """Offline: build the custom-data-name test theme from the stock one."""
     with open(args.stock, "rb") as fh:
@@ -1888,6 +1915,8 @@ def cmd_theme_make_test(args):
         print("is wrong somewhere. Stopping rather than build a test on a broken writer.")
         return 1
     print("Writer check: the stock theme rewrites byte-identical (%d bytes)." % len(data))
+    make = make_test_theme_2 if args.round == 2 else make_test_theme
+    expect = 4 if args.round == 2 else 2
     body = json.loads(raw)
     if theme_json_bytes(body) != raw:
         print("Re-serialising the stock JSON did NOT reproduce it byte for byte, so the test theme")
@@ -1895,9 +1924,9 @@ def cmd_theme_make_test(args):
         return 1
     print("JSON check:   the stock JSON re-serialises byte-identical (%d bytes)." % len(raw))
 
-    changed = make_test_theme(body)
-    if len(changed) != 2:
-        print("Expected to change 2 items on the start page and changed %d: %s" % (len(changed), changed))
+    changed = make(body)
+    if len(changed) != expect:
+        print("Expected to change %d items on the start page and changed %d: %s" % (expect, len(changed), changed))
         print("This isn't the theme the test was designed against. Stopping.")
         return 1
     out = join_theme(header, theme_json_bytes(body), assets, tail)
@@ -1907,7 +1936,7 @@ def cmd_theme_make_test(args):
     # Read it back with the same code the device-facing tools use, and check nothing else moved.
     _h, back, _a = read_theme(out)
     before = json.loads(raw)
-    make_test_theme(before)
+    make(before)
     same = back == before
     print("Changed:")
     for c in changed:
@@ -1934,26 +1963,63 @@ def cmd_sysdata(args):
             k, v = pair.split("=", 1)
             fixed[k] = v
 
-        print("\nPushing every %.1f s for %d s. Watch the small screen." % (args.every, args.seconds))
-        if args.test:
+        round2 = args.test and args.round == 2
+        every = args.every if args.every is not None else (0.05 if round2 else 1.0)
+        # Reads normally wait up to 50 ms for input. Here that would cap the push rate below 20 a second
+        # and blame the device for it, so poll without waiting and pace the loop ourselves.
+        link.ser.timeout = 0
+        print("\nPushing every %.2f s (%.0f a second) for %d s. Watch the small screen."
+              % (every, 1 / every, args.seconds))
+        if round2:
+            print("  left and right arcs, left number : CPU, sweeping 0 -> 100 -> 0 (the control)")
+            print("  middle arc                       : mk10level, sweeping the OPPOSITE way")
+            print("  middle number (above RATE)       : mk10count, 1, 2, 3 ... one per push")
+            print("  big text, top left               : mk10text, a new string every 2 s:")
+            print("                                     %s" % " | ".join(ROUND2_STRINGS))
+            print("  Press the MIDDLE keys, top and bottom - they have no action in this theme.")
+        elif args.test:
             print("  Cpu使用率 (the control)  : 11, 22, 33 ... 99, repeating - under the CPU label")
             print("  %-22s : 1, 2, 3 ...                     - under the TEST label" % TEST_DATA_NAME)
         print("  Anything the device asks for appears below as 'wants live data'.\n")
 
         asked = set()
         n = 0
-        end = time.time() + args.seconds
+        start = time.time()
+        end = start + args.seconds
         next_send = 0.0
+        sent_at = collections.deque()       # send times awaiting an acknowledgement, oldest first
+        acks, lat = 0, []
+        last_report = start
         while time.time() < end:
-            if time.time() >= next_send:
+            now = time.time()
+            if now >= next_send:
                 n += 1
                 fields = dict(fixed)
-                if args.test:
+                if round2:
+                    phase = ((now - start) % 4.0) / 4.0          # one sweep up and back every 4 s
+                    level = int(round(100 * (1 - abs(2 * phase - 1))))
+                    fields["Cpu使用率"] = str(level)
+                    fields["mk10level"] = str(100 - level)
+                    fields["mk10count"] = str(n)
+                    fields["mk10text"] = ROUND2_STRINGS[int((now - start) // 2) % len(ROUND2_STRINGS)]
+                elif args.test:
                     fields["Cpu使用率"] = str(11 * (1 + (n - 1) % 9))
                     fields[TEST_DATA_NAME] = str(n)
                 link.send_v1(V1_SEND_SYSTEM_DATA, fields)
-                print("  sent #%-3d %s" % (n, ", ".join("%s=%s" % kv for kv in sorted(fields.items()))))
-                next_send = time.time() + args.every
+                sent_at.append(time.time())
+                if not round2:
+                    print("  sent #%-3d %s" % (n, ", ".join("%s=%s" % kv for kv in sorted(fields.items()))))
+                next_send = max(next_send + every, now)     # a fixed schedule, so the rate doesn't drift
+            if round2 and now - last_report >= 1.0:
+                last_report = now
+                print("  %4.0f s  sent %-5d acknowledged %-5d  last mk10count=%d"
+                      % (now - start, n, acks, n))
+            for pkt in link.poll(show_junk=False):
+                if pkt.proto == "v1" and pkt.cmd == V1_SEND_SYSTEM_DATA and pkt.ptype == 2:
+                    acks += 1
+                    if sent_at:
+                        lat.append((time.time() - sent_at.popleft()) * 1000)
+                    continue
             for pkt in link.poll(show_junk=False):
                 d = describe(pkt)
                 if pkt.proto == "v1" and pkt.cmd == 15 and isinstance(d, dict):
@@ -1966,11 +2032,23 @@ def cmd_sysdata(args):
                             for x in new))
                 elif key_event(pkt):
                     print_event(pkt)
-            time.sleep(0.02)
+            time.sleep(max(0.0, min(0.005, next_send - time.time())))
 
-        print("\nThe device asked for: %s" % (", ".join(sorted(asked)) or "nothing"))
-        if args.test:
-            print("Asked for %s by name: %s" % (TEST_DATA_NAME, "YES" if TEST_DATA_NAME in asked else "no"))
+        took = time.time() - start
+        print("\nSent %d pushes in %.1f s: %.1f a second." % (n, took, n / took if took else 0))
+        if acks:
+            lat.sort()
+            print("The device acknowledged %d of them; round trip median %.0f ms, slowest 5%% %.0f ms."
+                  % (acks, lat[len(lat) // 2], lat[int(len(lat) * 0.95)]))
+        else:
+            print("The device acknowledged none of them (it may simply not acknowledge live data).")
+        if round2:
+            print("The last mk10count sent was %d. Compare it with the middle number now on screen." % n)
+        print("The device asked for: %s" % (", ".join(sorted(asked)) or "nothing"))
+        if not asked:
+            print("  (Normal. A real V2.32 MK10 has never been seen to ask; it takes pushed values unprompted.)")
+        if args.test and not round2:
+            print("The result is on the screen: if the number above TEST counted 1, 2, 3, custom names work.")
         print("Log: %s" % link.log.path)
     finally:
         link.close()
@@ -2406,8 +2484,9 @@ class SimulatedMK10(threading.Thread):
                 self.ack(pkt.cmd, {"version": self.version, "upgradeToLatestMethod": "1",
                                    "screen_width": "896", "screen_height": "304", "screen_model": "MK10",
                                    "deviceName": "ScreenKey", "deviceBl": "93", "deviceVolume": "7"})
-                # A theme page announces the live data it shows. Built-in names only: the simulator
-                # must not pretend to know whether the real firmware honours a custom one.
+                # A theme page announcing the live data it shows, as the firmware decode says it can.
+                # A real V2.32 device has NOT been seen to send this (October 2026); it takes pushed
+                # values unasked. Kept so the request-parsing path stays tested. Built-in names only.
                 os.write(self.fd, build_frame_v1(15, json.dumps(
                     {"deviceRequestSystemData": ["时", "分", "Cpu使用率"]}).encode(), 2))
             elif pkt.cmd == V1_GET_VERSION:
@@ -2625,13 +2704,17 @@ def main():
     p = sub.add_parser("theme-make-test", help="offline: build the custom-data-name test theme")
     p.add_argument("stock", help="the stock .Theme to start from")
     p.add_argument("out", help="where to write the test theme")
+    p.add_argument("--round", type=int, default=1, choices=(1, 2),
+                   help="1: one custom-named number. 2: a gauge, any string, and the push rate")
     p = sub.add_parser("sysdata", help="push live data to the theme (V1 cmd 1) and show what it asks for")
     common(p)
     p.add_argument("--test", action="store_true",
                    help="push the experiment's values: Cpu使用率 (control) and %s (custom)" % "mk10test")
     p.add_argument("--value", action="append", help="NAME=VALUE to push (repeatable)")
+    p.add_argument("--round", type=int, default=1, choices=(1, 2), help="which test theme is loaded")
     p.add_argument("--seconds", type=int, default=60)
-    p.add_argument("--every", type=float, default=1.0, help="seconds between pushes")
+    p.add_argument("--every", type=float, default=None,
+                   help="seconds between pushes (default 1, or 0.05 for --round 2)")
     p = sub.add_parser("theme-dig", help="offline: hunt for the theme file itself inside an installer")
     p.add_argument("file", help="the ScreenKey installer .exe")
     p.add_argument("--out", help="folder to save what it finds")

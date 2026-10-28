@@ -138,13 +138,53 @@ prints any cmd 15 the device sends.
 | yes | yes | no | **only built-in names work** |
 | yes | yes | yes | **custom names work** |
 
-If the device's cmd 15 lists `mk10test` by name, that is strong evidence on its own: it means the device
-took the name from the theme and is asking the host for it.
+### Result (October 2026, real MK10, firmware V2.32): custom names work
+
+| TEST label shown | CPU number moved | TEST number moved |
+|---|---|---|
+| yes | yes, 11, 22, 33 … | **yes, 1, 2, 3 …** |
+
+The number bound to `mk10test` — a name the firmware has never heard of — displayed what the host pushed
+under that name. So a theme item can show **any value the host chooses to name**, which is what lets a
+theme carry the manager's state (mute, levels, Slack, track titles) rather than only PC stats.
+
+The device **never sent cmd 15** during the run. It did not ask for any name, built-in or custom, and
+displayed the pushed values anyway: it accepts `SEND_SYSTEM_DATA` unprompted and binds by name. Whether it
+sends cmd 15 in some other situation (at boot, before a host connects; on a page switch) is unknown.
+
+Also proven by the same run, all for the first time on hardware:
+
+- the device loads a theme our writer produced;
+- `lunch-theme-test.sh` switched and restored `config.json` on the device's own busybox;
+- `saveToFile` writes `/mnt/SDCARD` as well as `/data`.
+
+Not yet tested: whether gauges, bars and state images (types 101, 102, 109, 114) take custom names the
+same way text does; non-numeric strings; how fast values can be pushed before the device falls behind.
+
+### Round 2: gauges, any string, and the push rate
+
+`theme-make-test STOCK OUT --round 2` changes four items on the start page's small screen:
+
+| Item | Stock | Round 2 | Tests |
+|---|---|---|---|
+| big top-left text, id 133 | `时` (the hour) | `mk10text` | any string: `OK`, `Hé`, `中文`, `Жж`, `ÆØ`, one too long to fit |
+| middle arc gauge, id 2 | `Cpu使用率` | `mk10level` | a custom name on a gauge (type 109) |
+| middle number, id 135 | `Gpu使用率` | `mk10count` | whether text keeps pace: one count per push |
+| middle label, id 138 | `GPU` | `RATE` | this theme is the one that loaded |
+
+`sysdata --test --round 2` pushes at 20 a second by default (`--every 0.02` for 50): CPU sweeping
+0 → 100 → 0 as the control (it drives the left and right arcs and the left number), `mk10level` sweeping the
+opposite way, `mk10count` counting, and `mk10text` changing every 2 s. It reports how many pushes went out
+and how many the device acknowledged, if any, with their round trip.
+
+The probe's serial reads normally wait up to 50 ms for input, which capped the first version of this loop at
+8 a second — it would have blamed the device for the tool's own limit. `sysdata` now polls without waiting
+and holds a fixed schedule; against the simulator it sustains 20.1 a second at the default and 50 when asked.
 
 ## What is still unknown
 
-- **The device's tolerance for an edited theme.** The writer is exact, but nothing written by it has been
-  loaded on hardware yet.
+- **The device's tolerance for a theme that differs more from stock.** An edited stock theme loads; a
+  generated one with different pages and items has not been tried.
 - **Whether the device reloads a theme** without a reboot, and what `DELETE_THEME` (V1 cmd 11) does.
 - Item types other than the eight above. The firmware has more widget factories than the stock theme uses —
   audio visualisers and a line chart among them — so there are type numbers we have not seen.
