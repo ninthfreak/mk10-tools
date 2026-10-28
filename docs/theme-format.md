@@ -138,13 +138,33 @@ prints any cmd 15 the device sends.
 | yes | yes | no | **only built-in names work** |
 | yes | yes | yes | **custom names work** |
 
-If the device's cmd 15 lists `mk10test` by name, that is strong evidence on its own: it means the device
-took the name from the theme and is asking the host for it.
+### Result (October 2026, real MK10, firmware V2.32): custom names work
+
+| TEST label shown | CPU number moved | TEST number moved |
+|---|---|---|
+| yes | yes, 11, 22, 33 … | **yes, 1, 2, 3 …** |
+
+The number bound to `mk10test` — a name the firmware has never heard of — displayed what the host pushed
+under that name. So a theme item can show **any value the host chooses to name**, which is what lets a
+theme carry the manager's state (mute, levels, Slack, track titles) rather than only PC stats.
+
+The device **never sent cmd 15** during the run. It did not ask for any name, built-in or custom, and
+displayed the pushed values anyway: it accepts `SEND_SYSTEM_DATA` unprompted and binds by name. Whether it
+sends cmd 15 in some other situation (at boot, before a host connects; on a page switch) is unknown.
+
+Also proven by the same run, all for the first time on hardware:
+
+- the device loads a theme our writer produced;
+- `lunch-theme-test.sh` switched and restored `config.json` on the device's own busybox;
+- `saveToFile` writes `/mnt/SDCARD` as well as `/data`.
+
+Not yet tested: whether gauges, bars and state images (types 101, 102, 109, 114) take custom names the
+same way text does; non-numeric strings; how fast values can be pushed before the device falls behind.
 
 ## What is still unknown
 
-- **The device's tolerance for an edited theme.** The writer is exact, but nothing written by it has been
-  loaded on hardware yet.
+- **The device's tolerance for a theme that differs more from stock.** An edited stock theme loads; a
+  generated one with different pages and items has not been tried.
 - **Whether the device reloads a theme** without a reboot, and what `DELETE_THEME` (V1 cmd 11) does.
 - Item types other than the eight above. The firmware has more widget factories than the stock theme uses —
   audio visualisers and a line chart among them — so there are type numbers we have not seen.

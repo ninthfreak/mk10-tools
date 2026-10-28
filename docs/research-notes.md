@@ -341,6 +341,16 @@ It settles the things we could not get at from the binary:
 - **Every JSON value is a string**, numbers and booleans included.
 - **A key is just an item**, `type` `115`, with `row`, `col` and a base64 `controlData` holding its action.
 
+### A theme can show anything the host names (October 2026)
+
+The decisive test for using themes at all: a copy of the stock theme with one value rebound from `Gpu使用率`
+to the made-up name `mk10test`, installed for one boot by `lunch-theme-test.sh` without the card leaving the
+device. Pushing `mk10test` = 1, 2, 3 over V1 cmd 1 made that number count on the screen, beside the
+untouched CPU control. The device never asked for any name first. Details in `docs/theme-format.md`.
+
+So the theme route can carry the manager's own state, and the cost we measured — ~85 ms composing and
+encoding each frame on the PC, ~29 ms decoding it on the device — becomes a few bytes per changed value.
+
 The sections below were written before the file was found. They were right that the format is JSON and
 mostly right about the vocabulary; they are kept because the reasoning is still how we would approach the
 next unknown.

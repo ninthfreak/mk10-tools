@@ -209,7 +209,7 @@ acknowledgement with the same cmd number.
 | cmd | Name | Notes |
 |---|---|---|
 | 0 | FIND_DEVICE | Reply has `version`, `screen_width`, `screen_height`, `screen_model`, `deviceBl`, `deviceVolume` |
-| 1 | SEND_SYSTEM_DATA | PC stats for themes (CPU, GPU, RAM, time; names are in Chinese in the firmware) |
+| 1 | SEND_SYSTEM_DATA | `QMap<QString,QString>` of live-data name → value. The firmware's own names are Chinese (CPU, GPU, RAM, time), but **any name works**: a theme item bound to a made-up name shows what the host pushes under it (tested October 2026) |
 | 2 | RELOAD | |
 | 3 | GET_THEME | Theme files, plus `bytesTotal` and `bytesAvailable` in MB. On a device with no theme installed it returns the two sizes and nothing else (seen: 2648 MB total, 2598 MB free) |
 | 4 | SET_BL | Backlight |
@@ -223,7 +223,7 @@ acknowledgement with the same cmd number.
 | 12 | SEND_PIXMAP | Named JPEGs, `QMap<QString,QByteArray>`. Tried on a real V2.32 device with no theme installed: every name acknowledged with an **empty payload and no visible change**. Looks theme-scoped and useless while the host drives the screen with cmd 100 |
 | 13 | DEVICE_CMD | Device to host: key events on V2.29 (firmware name `ProactiveEscalationCMD`) |
 | 14 | REQUEST_UPLOAD_KEY | |
-| 15 | SEND_JSON | Device to host: the theme asks for live data (`deviceRequestSystemData`) |
+| 15 | SEND_JSON | Device to host: the theme asks for live data (`deviceRequestSystemData`). From the firmware decode; **not seen** from a real V2.32 device, which takes cmd 1 values unasked |
 
 V2.29 key events arrive as cmd 13 with a `QList<QMap<QString,QVariant>>`:
 `[{type: "keyState", row, col, pressed}, {the device's own configured action for that key}]`.

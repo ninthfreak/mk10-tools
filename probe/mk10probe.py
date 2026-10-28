@@ -1969,8 +1969,10 @@ def cmd_sysdata(args):
             time.sleep(0.02)
 
         print("\nThe device asked for: %s" % (", ".join(sorted(asked)) or "nothing"))
+        if not asked:
+            print("  (Normal. A real V2.32 MK10 has never been seen to ask; it takes pushed values unprompted.)")
         if args.test:
-            print("Asked for %s by name: %s" % (TEST_DATA_NAME, "YES" if TEST_DATA_NAME in asked else "no"))
+            print("The result is on the screen: if the number above TEST counted 1, 2, 3, custom names work.")
         print("Log: %s" % link.log.path)
     finally:
         link.close()
@@ -2406,8 +2408,9 @@ class SimulatedMK10(threading.Thread):
                 self.ack(pkt.cmd, {"version": self.version, "upgradeToLatestMethod": "1",
                                    "screen_width": "896", "screen_height": "304", "screen_model": "MK10",
                                    "deviceName": "ScreenKey", "deviceBl": "93", "deviceVolume": "7"})
-                # A theme page announces the live data it shows. Built-in names only: the simulator
-                # must not pretend to know whether the real firmware honours a custom one.
+                # A theme page announcing the live data it shows, as the firmware decode says it can.
+                # A real V2.32 device has NOT been seen to send this (October 2026); it takes pushed
+                # values unasked. Kept so the request-parsing path stays tested. Built-in names only.
                 os.write(self.fd, build_frame_v1(15, json.dumps(
                     {"deviceRequestSystemData": ["时", "分", "Cpu使用率"]}).encode(), 2))
             elif pkt.cmd == V1_GET_VERSION:
