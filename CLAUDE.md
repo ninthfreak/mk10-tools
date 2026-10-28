@@ -1,7 +1,8 @@
 # mk10-tools: notes for Claude Code
 
 Unofficial software for the Waveshare MK10 (10 LCD keys + a 240×296 small screen, one 896×304 canvas, USB serial).
-Read `docs/protocol.md` before touching device code, and `docs/research-notes.md` for why things are the way they are.
+Read `docs/protocol.md` before touching device code, `docs/theme-format.md` for the on-device theme
+format, and `docs/research-notes.md` for why things are the way they are.
 
 ## Layout
 
@@ -36,6 +37,11 @@ Read `docs/protocol.md` before touching device code, and `docs/research-notes.md
     installer or the extracted `KeyboardDevice` for the theme format's vocabulary, and `unpack FILE --out DIR`
     lists or extracts archives packed inside the installer, and `theme-dig FILE` hunts for the theme itself as
     plain JSON (the installer keeps some of its payload uncompressed — that is how the firmware is extracted).
+  - `theme-read FILE [--keys] [--out DIR]` is offline: it takes a `.Theme` apart — pages, items, every key's
+    action, and the embedded assets. **`docs/theme-format.md` is the format**, read off the stock theme.
+  - `theme-make-test STOCK OUT` (offline) builds the custom-data-name test theme; `sysdata --test` pushes live
+    data to a loaded theme over V1 cmd 1 and prints what the device asks for (cmd 15). The writer
+    (`join_theme`, `theme_json_bytes`) reproduces the stock theme byte for byte — keep it that way.
   - `upload FILE [--dest PATH]` puts a file on the device the V2 way (`saveToFile` in 64 KB base64 chunks, then
     `setFileCRC`), defaulting to `/data/mk10probe/`; `delete PATH...` removes files. **Both write to the device**
     and ask you to type a word first. The probe refuses any write method until the running command unlocks it by
@@ -49,6 +55,14 @@ Read `docs/protocol.md` before touching device code, and `docs/research-notes.md
 
 ## Hardware safety rules
 
+- **The SD card is the device's system disk**, not storage: `boot-resource`, `env`, `boot`, `rootfs` and
+  `UDISK` are all partitions of it, and `/data` lives on `UDISK`. Image the card before changing anything on
+  it — that image is a complete, restorable firmware backup. Windows mounts only the 32 MB `boot-resource`
+  partition, which is also what the device calls `/mnt/SDCARD`; it holds the boot resources and fills fast.
+- **Don't make the user pull the SD card.** The MK10's card slot spring may be wearing. Everything on the card
+  can be reached without removing it: `saveToFile` (`probe upload`) writes `/mnt/SDCARD` and `/data` directly,
+  and `lunch.sh` runs as root before the app starts. Prefer changes that revert themselves on the next boot —
+  `sdcard-tools/lunch-theme-test.sh` is the pattern.
 - Only one program can open the MK10's serial port. Quit OpenDeck, ScreenKey and MK10 Manager before using another.
 - **Ask the user first** before sending anything to a real device that writes or deletes files (`saveToFile`,
   `setFileCRC`, `deleteFiles`, V1 FILE_START/FILE_END outside `/data/mk10probe/`, DELETE_THEME) or updates firmware.

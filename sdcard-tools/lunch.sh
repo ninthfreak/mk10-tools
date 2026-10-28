@@ -4,60 +4,85 @@
 # /etc/init.d/qt_app1 on the device copies it to /data/lunch.sh and runs it AS ROOT at boot, before
 # KeyboardDevice starts. That hook is Waveshare's, not ours. Take the card out and it stops happening.
 #
-# This script only reads. It writes nothing outside /mnt/SDCARD/mk10dump/, deletes nothing, and starts
-# no services. Keep it that way unless you mean otherwise: it runs before the UI and the boot waits for
-# it, so anything that loops or blocks here stops the device from starting.
+# This script only reads. It writes nothing outside /mnt/SDCARD/mk10dump/ and /data/mk10dump-report.txt,
+# deletes nothing, and starts no services. Keep it that way unless you mean otherwise: it runs before the
+# UI and the boot waits for it, so anything that loops or blocks here stops the device from starting.
 #
-# v2. The first version left every file after the first one empty: the writes were still in cache when
-# the card went away. So now everything goes into ONE file, each section is flushed as it is written,
-# and the slow copying only happens if you ask for it.
+# v3. The first run left every file after the first one empty, which is what a full filesystem looks
+# like: the redirection makes the file, the write fails for want of space, and the error message has
+# nowhere to go either. So this version builds the report in RAM, keeps a copy on the device itself,
+# and only touches the card once, at the end, with one small file.
 
+TMP=/tmp/mk10report.txt
+KEEP=/data/mk10dump-report.txt
 OUT=/mnt/SDCARD/mk10dump
-R="$OUT/report.txt"
-mkdir -p "$OUT"
 
-say() { echo "" >> "$R"; echo "===== $* =====" >> "$R"; }
-run() { say "$1"; shift; "$@" >> "$R" 2>&1; sync; }
+say() { echo ""; echo "===== $* ====="; }
 
-: > "$R"
-run "when"            date
-run "kernel"          uname -a
-run "cmdline"         cat /proc/cmdline
-run "model"           cat /sys/firmware/devicetree/base/model
-run "mounts"          mount
-run "disk"            df -h
-run "processes"       ps
-run "block devices"   ls -la /dev/mmcblk0p1 /dev/mmcblk0p5 /dev/mmcblk0p6 /dev/mmcblk1 /dev/mmcblk1p1
-run "/mnt"            ls -la /mnt
-run "/data"           ls -la /data
-run "/data/theme"     find /data/theme
-run "/data sizes"     du -sh /data/theme /data/image /data/video /data/fonts /data/info /data/audio
-run "/data, whole"    find /data
-run "/overlay"        find /overlay -maxdepth 4
-run "KeyboardInfo"    cat /data/KeyboardInfo
-run "file_info.json"  cat /data/file_info.json
-run "appLunch.sh"     cat /data/appLunch.sh
-run "qt_app1"         cat /etc/init.d/qt_app1
-run "previous log"    tail -c 4000 /mnt/SDCARD/log.txt
+{
+    say "when";             date
+    say "kernel";           uname -a
+    say "cmdline";          cat /proc/cmdline
+    say "model";            cat /sys/firmware/devicetree/base/model
 
-say "report complete"
-sync
+    # The card first, because running out of room on it is what broke the last run.
+    say "free space";       df -h
+    say "free space (raw)"; df
+    say "partitions";       cat /proc/partitions
+    say "mmc devices";      ls -la /dev/mmcblk*
+    say "mounts";           mount
+    say "card contents";    ls -la /mnt/SDCARD
+    say "card usage";       du -sh /mnt/SDCARD/* 2>&1
 
-# --- the slow part, only if you ask for it -------------------------------------------------------
-# Create an empty file called "copy-everything" next to lunch.sh on the card to turn this on. It is
-# off by default because copying a provisioned /data can take long enough that pulling the card or
-# cutting the power loses the lot - which is exactly what happened the first time.
+    say "processes";        ps
+    say "/mnt";             ls -la /mnt
+    say "/data";            ls -la /data
+    say "/data sizes";      du -sh /data/* 2>&1
+
+    # The question the whole exercise is for.
+    say "/data/theme";      find /data/theme
+    say "/data/info";       find /data/info
+    say "/data/fonts";      find /data/fonts
+
+    say "/data, whole";     find /data -maxdepth 3
+    say "/overlay";         find /overlay -maxdepth 4
+    say "KeyboardInfo";     cat /data/KeyboardInfo
+    say "file_info.json";   cat /data/file_info.json
+    say "appLunch.sh";      cat /data/appLunch.sh
+    say "qt_app1";          cat /etc/init.d/qt_app1
+    say "report complete";  date
+} > "$TMP" 2>&1
+
+# Keep a copy on the device's own storage, which has room, so a full card can't lose it. Next run
+# picks it up even if this one can't write to the card at all.
+cp "$TMP" "$KEEP" 2>/dev/null
+
+# Now the card, once, with one small file. Only if there is somewhere to put it.
+if mkdir -p "$OUT" 2>/dev/null; then
+    cp "$TMP" "$OUT/report.txt" 2>/dev/null
+    cp "$KEEP" "$OUT/report-previous.txt" 2>/dev/null
+    sync
+fi
+
+# --- the slow part, only if you ask for it, and only if the card has room ------------------------
+# Create an empty file called "copy-everything" next to lunch.sh on the card to turn this on.
 [ -f /mnt/SDCARD/copy-everything ] || exit 0
 
-say "copying /data/theme"
-cp -r /data/theme "$OUT/theme" >> "$R" 2>&1
+# Refuse if the card has less than 64 MB free. Filling it is what caused the empty files.
+FREE=$(df -k /mnt/SDCARD 2>/dev/null | awk 'NR==2 {print $4}')
+case "$FREE" in ''|*[!0-9]*) FREE=0 ;; esac
+if [ "$FREE" -lt 65536 ]; then
+    echo "" >> "$OUT/report.txt"
+    echo "===== copy skipped: only ${FREE} KB free on the card =====" >> "$OUT/report.txt"
+    sync
+    exit 0
+fi
+
+cp -r /data/theme "$OUT/theme" 2>>"$OUT/report.txt"
 sync
-say "copying the rest"
-cp -r /data/info  "$OUT/info"  >> "$R" 2>&1
-cp -r /data/fonts "$OUT/fonts" >> "$R" 2>&1
+cp -r /data/info  "$OUT/info"  2>>"$OUT/report.txt"
+cp -r /data/fonts "$OUT/fonts" 2>>"$OUT/report.txt"
 sync
-say "copying KeyboardDevice (2.3 MB)"
-cp /data/KeyboardDevice "$OUT/KeyboardDevice" >> "$R" 2>&1
-sync
-say "copies complete"
+cp /data/KeyboardDevice "$OUT/KeyboardDevice" 2>>"$OUT/report.txt"
+echo "===== copies complete =====" >> "$OUT/report.txt"
 sync

@@ -238,17 +238,19 @@ The factories are `QGraphics…Make`, and each one's property names sit immediat
 
 ### What is still missing
 
-**Per-item geometry.** No `x`/`y`/`width`/`height` keys turn up in the item band. `item_offset` and
-`pageData` exist in the **V2.32** build but not in this 2022 one, so the schema moved between them. Position
-is the one thing we would still be guessing at.
+**Per-item geometry.** No `x`/`y`/`width`/`height` keys turn up in the item band. Position is the one thing
+we would still be guessing at. (`pageData` is in fact present in every build checked — I had said it was
+V2.32-only, which was wrong. `item_offset` really is absent from the 2022 builds.)
 
 ### Two corrections to the earlier notes
 
 - **`layer` is not a theme key.** It sits in the QMK block next to `dynamic_keymap_set_keycode`, `column` and
   `keycode` — it is a keymap layer. The old table had it under Structure.
-- **`.Theme` as an extension appears nowhere in the firmware**, not once. The resolution folders are
-  `/data/theme/<width>x<height>/` — `480x480`, `800x480`, `1024x600` and so on — so for this device the path
-  to try is `/data/theme/896x304/`, not the `/data/theme/MK10/<folder>/<name>.Theme` the older notes record.
+- **`.Theme` as an extension appears nowhere in the 2022 firmware**, and its folders are
+  `/data/theme/<width>x<height>/`. I took that to mean the older note about
+  `/data/theme/MK10/<folder>/<name>.Theme` was wrong. It is the other way round: that note came from the
+  **device's own `config.json`**, which is authoritative for the firmware it actually runs, and the 2022
+  image is three years older. The convention changed between builds. Use the `MK10/` form.
 
 ### What the binary would not give up
 
@@ -320,7 +322,30 @@ and a set of audio visualisers — `audioGuiRoundArc`, `audioGuiRoundPoint`, `au
 `audioGuiRectType1`, `audioGuiRoundType1`. Also `STM32CommunicationThread`, though `hardware.md` records the
 keyboard chip as a GD32.
 
-### Why the stock theme can't be had
+### The stock theme, found (October 2026)
+
+**It was on the SD card all along, on partition 6.** `/upper/data/theme/MK10/默认主题-微雪-20250926/默认主题-微雪.Theme`,
+13.2 MB. DiskInternals showed that partition as empty because its ext4 journal **needed recovery** — a dirty
+journal that read-only tools won't replay. `e2fsck` on a copy of the image replayed it and the whole overlay
+appeared: 517 files, ~148 MB.
+
+The format is in `docs/theme-format.md` and `mk10probe.py theme-read` parses it. In short: a Qt QDataStream
+container holding a `QMap<QString,QVariant>` header, a qint64-prefixed blob of **UTF-8 JSON**, and a
+`QMap<QString,QByteArray>` of 406 embedded assets.
+
+It settles the things we could not get at from the binary:
+
+- **Item geometry is `x`, `y`, `z`** — the keys I searched for and could not find, because they are short
+  and common and I was looking in the wrong string band.
+- **`type` is a number as a string**, `100`–`115`, which is why items are held in a `QMap<int, …>`.
+- **Every JSON value is a string**, numbers and booleans included.
+- **A key is just an item**, `type` `115`, with `row`, `col` and a base64 `controlData` holding its action.
+
+The sections below were written before the file was found. They were right that the format is JSON and
+mostly right about the vocabulary; they are kept because the reasoning is still how we would approach the
+next unknown.
+
+### Why the stock theme can't be had (superseded — see above)
 
 `theme-dig` over the whole 355 MB installer: the widget names are in there (they are in the firmware's symbol
 table — `FlipClock` 56 times, `CircularProgressBar` 94), but **no JSON object parses around any of them**, and
@@ -373,6 +398,43 @@ Two consequences worth holding on to:
   device back. That is a much better safety story than it looked: a bad theme is a file, not a brick.
 - **`rndis` is in `setusbconfig`.** USB ethernet to the device is one line in `lunch.sh`, which with `nc`
   already on board is a shell by another route if `adb` turns out to clash with the serial gadget.
+
+### Reading the card: the running software is in the overlay
+
+The card's **partition 5 (`rootfs`)** `/data` turns out to be the pristine factory base — `theme/`, `image/`,
+`video/`, `fonts/`, `info/` and `audio/` all present and **all empty**, exactly matching the 2022 firmware
+image, with a `KeyboardDevice` that reports **V2.29**.
+
+The version ladder makes the structure obvious:
+
+| Copy | Version |
+|---|---|
+| Card's `rootfs` partition (p5) | **V2.29** |
+| Published `MK10_V1.0.img` | **V2.31** |
+| What the device actually reports | **V2.32** |
+
+So the binary the device runs is in neither: it is on **partition 6 (`UDISK`)**, the overlay. OpenWrt's
+overlayfs merges `UDISK`'s upper directory over the read-only rootfs, so everything ScreenKey ever installed
+— the firmware update, the theme, fonts, images — lives there and shadows the empty factory copies. Reading
+p5 shows the device as it left the factory; reading p6 shows what it has become. **p6 is the one that
+matters.**
+
+This also finally explains `.Theme`. The string appears in no build because the path is **data, not code**:
+`config.json` supplies `defaultTheme` as a complete path and the firmware just opens it. Neither my original
+note nor my correction of it was right — there was nothing to correct.
+
+### Pixel format, confirmed by arithmetic
+
+The factory `/data` carries raw framebuffer dumps whose sizes settle the format exactly:
+
+| File | Bytes | Works out as |
+|---|---|---|
+| `128x128.bin` | 32,768 | 128 × 128 × **2** — RGB565, one key |
+| `240x296.bin` | 142,080 | 240 × 296 × **2** — RGB565, the small screen |
+| `720x1280.bin` | 3,686,400 | 720 × 1280 × **4** — ARGB8888, a different device in the family |
+
+RGB565 for this panel, which matches the `ARGB8888_TO_RGB565_Thread` class in the binary and is what an
+on-device renderer would write to `/dev/fb0`.
 
 ### Running our own code on the device
 
