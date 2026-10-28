@@ -59,3 +59,22 @@ if [ -f "$ONCE" ]; then
 fi
 
 sync
+
+# Stop here, always. Uploading this over an older, longer lunch.sh may leave that file's tail behind if
+# saveToFile doesn't truncate (untested), and nothing past this line must ever run.
+exit 0
+# padding so this file is longer than any lunch.sh it may be uploaded over                         
+# padding so this file is longer than any lunch.sh it may be uploaded over                         
+# padding so this file is longer than any lunch.sh it may be uploaded over                         
+# padding so this file is longer than any lunch.sh it may be uploaded over                         
+# padding so this file is longer than any lunch.sh it may be uploaded over                         
+# padding so this file is longer than any lunch.sh it may be uploaded over                         
+# padding so this file is longer than any lunch.sh it may be uploaded over                         
+# padding so this file is longer than any lunch.sh it may be uploaded over                         
+# padding so this file is longer than any lunch.sh it may be uploaded over                         
+# padding so this file is longer than any lunch.sh it may be uploaded over                         
+# padding so this file is longer than any lunch.sh it may be uploaded over                         
+# padding so this file is longer than any lunch.sh it may be uploaded over                         
+# padding so this file is longer than any lunch.sh it may be uploaded over                         
+# padding so this file is longer than any lunch.sh it may be uploaded over                         
+# padding so this file is longer than any lunch.sh it may be uploaded over                         
