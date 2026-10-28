@@ -179,7 +179,7 @@ same way text does; non-numeric strings; how fast values can be pushed before th
 | Theme loaded (`RATE` shown) | **yes** |
 | Text keeps pace at 20 a second | **yes** — the middle number ended on exactly the last value sent (1201) and stopped when the probe did. No backlog |
 | Device acknowledges `SEND_SYSTEM_DATA` | **yes, every one** — 1201 of 1201 as an empty V1 ACK with the same cmd. Round trip 6 ms median, 7 ms at the 99th percentile, **11 ms worst**; acknowledgements came every 50 ms like the pushes, never more than 56 ms apart. No malformed bytes in 60 s |
-| Arc gauges (type 109) move | **no — not even the control** bound to the built-in `Cpu使用率`. So it isn't the custom name; gauges don't take pushed values the way text does, or need something else. Cause unknown |
+| Arc gauges (type 109) move | **probably yes — I was watching the wrong part.** A 109's gradient ring is a fixed track; what moves is a small **indicator dot** whose size is `arcRadius`. On the start page that is 5 px, easy to miss. On the PC Perf page (16 px) the photos show the dot at the right place for 7, 49, 96 and 97 — see below |
 | Any string displays | **probably yes** — the strings changed and non-English characters appeared. What looked like text drawing over itself is a **layout collision**: the minute item beside the hour shows its placeholder `Text` (nobody pushed `分`), and the two overlap. Photos of the stock theme show the same thing with no strings involved: hour and minute both read `Text`, merged into `TexText` |
 | Key presses reach the host while a theme runs | **yes** — both middle keys, down and up, as the usual V2 `keyStateChanged`. So the manager keeps its key actions with a theme loaded |
 
@@ -192,6 +192,55 @@ hardware confirmation that `lunch-theme-test.sh` undoes itself), added three thi
 - **A state image does switch on a named value.** The robot on the small screen (id 132, type 114) changes
   expression by itself; it is bound to `randomNumbers`, a source inside the device. So type 114 picks its
   picture from a live-data name — the likeliest route to meters and mute icons if gauges stay unresponsive.
+
+### Which widgets follow pushed values (stock pages, `sysdata --stock`, photos)
+
+Photographed on the stock theme's own PC Perf and Clock pages while every name it uses was pushed:
+
+| Type | Widget | Follows pushed values | Seen |
+|---|---|---|---|
+| `113` | text | **yes** | time `11:35`, date `2026-10-28`, every percentage |
+| `111` | flip / digit display | **yes**, with its flip animation | `displayType` `1` is a dot-matrix clock on the keys, `0` plain digits |
+| `101` | circular bar | **yes** | CPU 5 → a sliver, GPU 97 → full, RAM 49 → half |
+| `102` | rectangular bar | **yes** | CPU 85 long and 35 short; GPU 57 then 83 |
+| `109` | arc gauge | **yes — the dot moves, the ring doesn't** | indicator at the start for 7, the top for 49, the end for 96 and 97 |
+| `114` | state image | yes, from a device-internal source (`randomNumbers`) | pushed values on one untested |
+
+So every widget type the stock theme uses is driven by live data, and the device keeps no clock of its own:
+`时`, `分`, `秒` and `日期` all come from the host.
+
+Two stock-theme quirks, so they don't mislead anyone later: the start page's three arcs are all bound to
+`Cpu使用率`, and PC Perf's **HDD** gauge is bound to `RAM使用率`.
+
+### Page switching
+
+A key whose action is `pageSwitch` carries `jumpToPage` as a **number**, not a page name: the 0-based index
+among **top-level pages** — those with no `parentPageName`. In the stock theme, WIN HotKey → 1, PC Perf → 2 and
+Clock → 3 land on the right pages only under that reading. `openPage` instead names its target by UUID and is
+used for child pages (folders), which carry `parentPageName`; `oneLevelUp` returns from one.
+
+**The host has no page-switch command** — about 80% confidence, from three places:
+
+- **V1:** the firmware names its own commands (`CMD_VALUE_FIND_DEVICE`, `…_SEND_SYSTEM_DATA_TO_DEVICE`,
+  `…_SET_DEVICE_RELOAD`, `…_GET_DEVICE_THEME`, `…_SET_DEVICE_BL`, `…_SET_DEVICE_SCAN_STATE`, `…_FILE_START`,
+  `…_FILE_END`, `…_GET_DEVICE_VERSION`, `…_SET_DEVICE_CANVASFLIP`, `…_GET_DEVICE_SCREENMESSAGE`,
+  `…_SET_DEVICE_DELETE_THEME`, `…_SEND_PIXMAP`, `…_DEVICE_ProactiveEscalationCMD`, `…_REQUEST_UPLOAD_KEY`,
+  `…_SEND_JSON`, plus `…_JSON` and `…_SHOW_JPG` in V2.31). That is our table, complete, and none switches pages.
+- **V2:** the device lists its ten JSON methods itself; none does.
+- **JSON over V1 cmd 15:** the keys beside the serial code are device settings, mouse control, Wi-Fi and the
+  keyboard chip (`setDeviceName`, `controlMouse`, `connect`/`wifissid`, `qmk_string`, `bootloader_jump`,
+  `globalStatusUpdate`, `uploadAllState`). Inferred from how the strings cluster, so the least certain of the
+  three. **`bootloader_jump` and the Wi-Fi keys must never be sent.**
+
+`themePageSwitch`, `pageSwitch`, `jumpToPage`, `openPage` and `oneLevelUp` sit beside `videoplayer.cpp` with the
+other key-action names: page switching is something the device does **when its own key is pressed**.
+
+### `/data/info/ThemeMessage`
+
+A `QMap<QString,QString>` register of installed themes, path → CRC32. On this unit it holds one entry, the
+stock theme, with `2256378079` — exactly the stock `.Theme`'s CRC32. Themes put in place with `saveToFile`
+are not in it and load anyway, so it is bookkeeping (most likely what V1 `GET_THEME` reports), not a
+requirement for loading.
 
 `sysdata --stock` pushes every name the stock theme uses (the PC's real time and date, and CPU, GPU and RAM
 usage and temperatures each sweeping at a different speed), so the stock pages — PC Perf's bars and

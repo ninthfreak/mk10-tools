@@ -41,7 +41,9 @@ format, and `docs/research-notes.md` for why things are the way they are.
     action, and the embedded assets. **`docs/theme-format.md` is the format**, read off the stock theme.
   - `theme-make-test STOCK OUT [--round 2]` (offline) builds the test themes; `sysdata --test [--round 2]` pushes
     live data to a loaded theme over V1 cmd 1 and reports the rate achieved and any acknowledgements;
-    `sysdata --stock` pushes every name the stock theme uses, so its own pages show which widgets follow data. The writer
+    `sysdata --stock` pushes every name the stock theme uses, so its own pages show which widgets follow data.
+    `reload [--theme PATH | --stock]` asks the device to load a theme without a reboot (V1 RELOAD), trying the
+    likely layouts of its one argument in turn and stopping at the first the device reports as a success. The writer
     (`join_theme`, `theme_json_bytes`) reproduces the stock theme byte for byte — keep it that way.
   - `upload FILE [--dest PATH]` puts a file on the device the V2 way (`saveToFile` in 64 KB base64 chunks, then
     `setFileCRC`), defaulting to `/data/mk10probe/`; `delete PATH...` removes files. **Both write to the device**

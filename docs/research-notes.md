@@ -351,6 +351,17 @@ untouched CPU control. The device never asked for any name first. Details in `do
 So the theme route can carry the manager's own state, and the cost we measured — ~85 ms composing and
 encoding each frame on the PC, ~29 ms decoding it on the device — becomes a few bytes per changed value.
 
+### Every stock widget type follows live data (October 2026)
+
+Pushing every name the stock theme uses and photographing its PC Perf and Clock pages showed text, flip
+digits, circular bars, rectangular bars and arc gauges all following the values — the arc's moving part is a
+small dot, which is why it looked dead on the start page. With custom names proven for text, a theme can
+carry the manager's meters as real bars, not just numbers.
+
+What is still open for building the manager on themes: whether the **host can switch pages** (needed for
+context rules), state images driven by pushed values (mute icons), pictures that change at run time (album
+art), and whether a theme generated from scratch loads.
+
 The sections below were written before the file was found. They were right that the format is JSON and
 mostly right about the vocabulary; they are kept because the reasoning is still how we would approach the
 next unknown.
