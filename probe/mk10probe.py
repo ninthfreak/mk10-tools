@@ -1946,6 +1946,27 @@ def cmd_theme_make_test(args):
     return 0 if same else 1
 
 
+def _sweep(t, period, low=0, high=100):
+    """0 -> 1 -> 0 over `period` seconds, scaled to low..high."""
+    phase = (t % period) / period
+    return int(round(low + (high - low) * (1 - abs(2 * phase - 1))))
+
+
+def stock_values(t):
+    """Every live-data name the stock theme shows, with values that move at different speeds, so each
+    widget can be told apart from the others by eye. The time and date are the PC's real ones."""
+    now = datetime.datetime.now()
+    return {
+        "时": now.strftime("%H"), "分": now.strftime("%M"), "秒": now.strftime("%S"),
+        "时间": now.strftime("%H:%M:%S"), "日期": now.strftime("%Y-%m-%d"),
+        "Cpu使用率": str(_sweep(t, 4)),             # fast: up and down every 4 s
+        "Gpu使用率": str(_sweep(t, 8)),             # half as fast
+        "RAM使用率": str(_sweep(t, 16)),            # slow
+        "Cpu温度": str(_sweep(t, 6, 30, 90)),       # degrees, 30 to 90
+        "Gpu温度": str(_sweep(t, 12, 30, 90)),
+    }
+
+
 def cmd_sysdata(args):
     """Push live values the way ScreenKey does (V1 cmd 1), and print what the device asks for (cmd 15)."""
     link = open_link(args)
@@ -1964,12 +1985,16 @@ def cmd_sysdata(args):
             fixed[k] = v
 
         round2 = args.test and args.round == 2
-        every = args.every if args.every is not None else (0.05 if round2 else 1.0)
+        every = args.every if args.every is not None else (0.05 if round2 else 0.1 if args.stock else 1.0)
         # Reads normally wait up to 50 ms for input. Here that would cap the push rate below 20 a second
         # and blame the device for it, so poll without waiting and pace the loop ourselves.
         link.ser.timeout = 0
         print("\nPushing every %.2f s (%.0f a second) for %d s. Watch the small screen."
               % (every, 1 / every, args.seconds))
+        if args.stock:
+            print("  Every name the stock theme uses: the PC's real time and date, and CPU, GPU and RAM")
+            print("  usage and CPU and GPU temperature, each sweeping at its own pace so you can tell them apart.")
+            print("  Visit the stock pages - start page, then PC Perf, then Clock - and see what moves.")
         if round2:
             print("  left and right arcs, left number : CPU, sweeping 0 -> 100 -> 0 (the control)")
             print("  middle arc                       : mk10level, sweeping the OPPOSITE way")
@@ -1995,6 +2020,8 @@ def cmd_sysdata(args):
             if now >= next_send:
                 n += 1
                 fields = dict(fixed)
+                if args.stock:
+                    fields.update(stock_values(now - start))
                 if round2:
                     phase = ((now - start) % 4.0) / 4.0          # one sweep up and back every 4 s
                     level = int(round(100 * (1 - abs(2 * phase - 1))))
@@ -2044,6 +2071,10 @@ def cmd_sysdata(args):
             print("The device acknowledged none of them (it may simply not acknowledge live data).")
         if round2:
             print("The last mk10count sent was %d. Compare it with the middle number now on screen." % n)
+        if args.stock and not round2:
+            last = stock_values(time.time() - start)
+            print("Last values sent: %s" % ", ".join("%s (%s) = %s" % (k, DATA_NAMES.get(k, k), v)
+                                                     for k, v in sorted(last.items())))
         print("The device asked for: %s" % (", ".join(sorted(asked)) or "nothing"))
         if not asked:
             print("  (Normal. A real V2.32 MK10 has never been seen to ask; it takes pushed values unprompted.)")
@@ -2478,6 +2509,7 @@ class SimulatedMK10(threading.Thread):
             first = sorted(m.items())[0] if m else (None, None)       # QMap begin() = smallest key
             if pkt.cmd == V1_SEND_SYSTEM_DATA:
                 self.system_data.update(m)          # remembered so tests can see what arrived
+                self.ack(pkt.cmd, None)             # a real V2.32 acknowledges every one (~6 ms); payload unknown
                 return
             if pkt.cmd == V1_FIND_DEVICE:
                 self.connected = True
@@ -2712,6 +2744,9 @@ def main():
                    help="push the experiment's values: Cpu使用率 (control) and %s (custom)" % "mk10test")
     p.add_argument("--value", action="append", help="NAME=VALUE to push (repeatable)")
     p.add_argument("--round", type=int, default=1, choices=(1, 2), help="which test theme is loaded")
+    p.add_argument("--stock", action="store_true",
+                   help="push every name the stock theme uses: real time and date, and sweeping CPU/GPU/RAM "
+                        "usage and temperatures (10 a second by default)")
     p.add_argument("--seconds", type=int, default=60)
     p.add_argument("--every", type=float, default=None,
                    help="seconds between pushes (default 1, or 0.05 for --round 2)")
