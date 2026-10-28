@@ -180,8 +180,23 @@ same way text does; non-numeric strings; how fast values can be pushed before th
 | Text keeps pace at 20 a second | **yes** — the middle number ended on exactly the last value sent (1201) and stopped when the probe did. No backlog |
 | Device acknowledges `SEND_SYSTEM_DATA` | **yes, every one** — 1201 of 1201 as an empty V1 ACK with the same cmd. Round trip 6 ms median, 7 ms at the 99th percentile, **11 ms worst**; acknowledgements came every 50 ms like the pushes, never more than 56 ms apart. No malformed bytes in 60 s |
 | Arc gauges (type 109) move | **no — not even the control** bound to the built-in `Cpu使用率`. So it isn't the custom name; gauges don't take pushed values the way text does, or need something else. Cause unknown |
-| Any string displays | inconclusive — the text changed, but appeared to draw over itself and its neighbours. The big hour item is about 65 px wide before the colon and minutes beside it, so anything wider than two digits overlaps them; whether old text is also left behind needs a photo |
+| Any string displays | **probably yes** — the strings changed and non-English characters appeared. What looked like text drawing over itself is a **layout collision**: the minute item beside the hour shows its placeholder `Text` (nobody pushed `分`), and the two overlap. Photos of the stock theme show the same thing with no strings involved: hour and minute both read `Text`, merged into `TexText` |
 | Key presses reach the host while a theme runs | **yes** — both middle keys, down and up, as the usual V2 `keyStateChanged`. So the manager keeps its key actions with a theme loaded |
+
+Photos taken afterwards, on the stock theme (the test had reverted on the next boot, as designed — the first
+hardware confirmation that `lunch-theme-test.sh` undoes itself), added three things:
+
+- **The device does not run the theme's clock itself.** The hour and minute items show their placeholder
+  `Text` unless the host pushes `时` and `分`. ScreenKey must push the time.
+- **The CPU ring looks the same at 98 and at 20**, consistent with arc gauges ignoring pushed values.
+- **A state image does switch on a named value.** The robot on the small screen (id 132, type 114) changes
+  expression by itself; it is bound to `randomNumbers`, a source inside the device. So type 114 picks its
+  picture from a live-data name — the likeliest route to meters and mute icons if gauges stay unresponsive.
+
+`sysdata --stock` pushes every name the stock theme uses (the PC's real time and date, and CPU, GPU and RAM
+usage and temperatures each sweeping at a different speed), so the stock pages — PC Perf's bars and
+circles, Clock's flip digits — show which widget types follow pushed values at all, without uploading
+anything.
 
 The acknowledgement matters as much as the rate. A pushed value costs the device ~6 ms, against ~29 ms to
 decode a whole-canvas JPEG, and because every push is acknowledged the host can pace values exactly as it
