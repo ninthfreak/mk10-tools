@@ -76,6 +76,7 @@ CMD_NAMES = {0: "FIND_DEVICE", 1: "SEND_SYSTEM_DATA", 2: "RELOAD", 3: "GET_THEME
              14: "REQUEST_UPLOAD_KEY", 15: "SEND_JSON", 100: "SHOW_JPG", 101: "JSON"}
 V1_FIND_DEVICE = 0
 V1_SEND_SYSTEM_DATA = 1  # payload QMap<QString,QString>: live data name -> value
+V1_RELOAD = 2            # firmware: CMD_VALUE_SET_DEVICE_RELOAD -> device_set_load(reload_name)
 V1_GET_THEME = 3          # reply: theme files + storage (MB)
 V1_FILE_START = 6         # payload {device_path: size}
 V1_FILE_END = 7           # payload {device_path: crc32 as decimal}; reply {"res": "1"/"0", "fileName": path}
@@ -1967,6 +1968,54 @@ def stock_values(t):
     }
 
 
+STOCK_THEME = "/data/theme/MK10/默认主题-微雪-20250926/默认主题-微雪.Theme"
+TEST_THEME_2 = "/data/theme/MK10/mk10test2/mk10test2.Theme"
+
+#: How RELOAD's one argument might be laid out. The firmware says it carries a name and nothing more. V1's
+#: file commands put their argument in the map's KEY ({path: size}), so that layout goes first.
+RELOAD_LAYOUTS = [
+    ("the path as the key, the way FILE_START and FILE_END carry theirs", lambda path: {path: ""}),
+    ("reload_name, the firmware's own name for the argument", lambda path: {"reload_name": path}),
+    ("path", lambda path: {"path": path}),
+]
+
+
+def cmd_reload(args):
+    """Ask the device to load a theme without a reboot (V1 RELOAD), trying one layout at a time."""
+    theme = STOCK_THEME if args.stock else args.theme
+    link = open_link(args)
+    try:
+        info = v1_handshake(link)
+        if info is None:
+            print("No answer to FIND_DEVICE. Is something else holding the port? Nothing was sent.")
+            return 1
+        print("Device: %s, firmware %s" % (info.get("screen_model", "?"), info.get("version", "?")))
+        print("\nAsks the device to load, without a reboot:\n  %s" % theme)
+        print("\nIf it works the screen changes to that theme. It might also become the theme the device boots")
+        print("with. If it does, 'reload --stock' switches back, and nothing here touches the stock theme itself.")
+        print("A layout the device doesn't understand may leave the screen blank until the next one, or a power")
+        print("cycle, which brings back whatever config.json names.")
+        if not args.yes and not _confirm("RELOAD", "send it"):
+            return 1
+        for label, make in RELOAD_LAYOUTS:
+            fields = make(theme)
+            print("\n-- trying %s" % label)
+            link.send_v1(V1_RELOAD, fields)
+            pkt = v1_wait(link, V1_RELOAD, timeout=args.wait)
+            reply = describe(pkt) if pkt else None
+            print("   device replied: %s" % (reply if pkt else "nothing within %.0f s" % args.wait))
+            if isinstance(reply, dict) and str(reply.get("res")) == "1":
+                print("   >> the device reports success. Stopping here - check the screen.")
+                print("\nLog: %s" % link.log.path)
+                return 0
+            time.sleep(args.pause)
+        print("\nNo layout was reported as a success. Check the screen anyway, and send me the log:")
+        print("  %s" % link.log.path)
+    finally:
+        link.close()
+    return 0
+
+
 def cmd_sysdata(args):
     """Push live values the way ScreenKey does (V1 cmd 1), and print what the device asks for (cmd 15)."""
     link = open_link(args)
@@ -2507,6 +2556,11 @@ class SimulatedMK10(threading.Thread):
                 return
             m = qmap_decode(pkt.payload) or {}
             first = sorted(m.items())[0] if m else (None, None)       # QMap begin() = smallest key
+            if pkt.cmd == V1_RELOAD:
+                # Assumption, not knowledge: success when the map's first key names a file it holds,
+                # the way FILE_START/FILE_END carry their path. The real layout is what 'reload' finds out.
+                self.ack(pkt.cmd, {"res": "1" if first[0] in self.files else "0"})
+                return
             if pkt.cmd == V1_SEND_SYSTEM_DATA:
                 self.system_data.update(m)          # remembered so tests can see what arrived
                 self.ack(pkt.cmd, None)             # a real V2.32 acknowledges every one (~6 ms); payload unknown
@@ -2750,6 +2804,13 @@ def main():
     p.add_argument("--seconds", type=int, default=60)
     p.add_argument("--every", type=float, default=None,
                    help="seconds between pushes (default 1, or 0.05 for --round 2)")
+    p = sub.add_parser("reload", help="ask the device to load a theme without a reboot (V1 RELOAD)")
+    common(p)
+    p.add_argument("--theme", default=TEST_THEME_2, help="theme path on the device (default: the round-2 test)")
+    p.add_argument("--stock", action="store_true", help="load the stock theme instead")
+    p.add_argument("--wait", type=float, default=8.0, help="seconds to wait for each reply")
+    p.add_argument("--pause", type=float, default=3.0, help="seconds between layouts, to watch the screen")
+    p.add_argument("--yes", action="store_true", help="don't ask first")
     p = sub.add_parser("theme-dig", help="offline: hunt for the theme file itself inside an installer")
     p.add_argument("file", help="the ScreenKey installer .exe")
     p.add_argument("--out", help="folder to save what it finds")
@@ -2802,7 +2863,7 @@ def main():
                "send-test": cmd_send_test, "update": cmd_update, "explore": cmd_explore,
                "pixmap": cmd_pixmap, "files": cmd_files, "theme-strings": cmd_theme_strings,
                "unpack": cmd_unpack, "theme-dig": cmd_theme_dig, "theme-read": cmd_theme_read,
-               "theme-make-test": cmd_theme_make_test, "sysdata": cmd_sysdata,
+               "theme-make-test": cmd_theme_make_test, "sysdata": cmd_sysdata, "reload": cmd_reload,
                "upload": cmd_upload, "delete": cmd_delete}[args.cmd]
     sys.exit(handler(args))
 
