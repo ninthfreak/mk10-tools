@@ -68,21 +68,37 @@ HIDONCE=$SD/hid-test-once
 HIDSRC=$SD/hidtest
 HID=/tmp/mk10hid
 HIDLOG=$SD/hid-test.log
+GADGETS=/sys/kernel/config/usb_gadget
 hsay() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$HIDLOG"; echo "$(cut -d' ' -f1 /proc/uptime) lunch: $*" >> "$HID/log.txt"; }
+# The outcome also goes into the USB serial number, which Waveshare's setusbconfig never overwrites, so the
+# PC can read it (probe hid) without the card. That needs configfs, which nothing has mounted yet at this
+# point of a stock boot; Waveshare's script mounts it too, and copes with finding it there.
+hcrumb() {
+    [ -d "$GADGETS" ] || mount -t configfs none /sys/kernel/config 2>/dev/null
+    if [ ! -d "$GADGETS/g1" ]; then
+        mkdir -p "$GADGETS/g1/strings/0x409" 2>/dev/null || return
+        echo "Allwinner Technology Inc." > "$GADGETS/g1/strings/0x409/manufacturer"
+    fi
+    echo "mk10hid-$1" > "$GADGETS/g1/strings/0x409/serialnumber"
+}
 if [ -f "$HIDONCE" ]; then
     MODE=$(tr -d '\r' < "$HIDONCE" | head -n 1)
     rm -f "$HIDONCE"
     mkdir -p "$HID"
     case " $MODE " in
         *[!a-z\ ]*|"  ")
-            hsay "refused: hid-test-once should hold words like 'hid audio', not '$MODE'" ;;
+            hsay "refused: hid-test-once should hold words like 'hid audio', not '$MODE'"
+            hcrumb refused-arm-file ;;
         *)
             if [ ! -f "$HIDSRC/mk10hid" ] || [ ! -f "$HIDSRC/usbconfig.sh" ] || [ ! -f "$HIDSRC/mk10loop.sh" ]; then
                 hsay "not armed: $HIDSRC needs mk10hid, usbconfig.sh and mk10loop.sh"
+                hcrumb missing-files
             elif [ ! -f /data/setusbconfig ]; then
                 hsay "not armed: there is no /data/setusbconfig to stand in for"
+                hcrumb no-setusbconfig
             elif grep -q "call-control test" /data/setusbconfig; then
                 hsay "not armed: /data/setusbconfig is already ours (a bind mount left from this boot?)"
+                hcrumb already-ours
             else
                 cp "$HIDSRC/mk10hid" "$HID/mk10hid"
                 # Scripts lose any CR on the way: '#!/bin/sh\r' would silently never run.
@@ -93,8 +109,10 @@ if [ -f "$HIDONCE" ]; then
                 echo "$MODE" > "$HID/mode"
                 if mount -o bind "$HID/usbconfig.sh" /data/setusbconfig; then
                     hsay "armed for this boot: $MODE"
+                    hcrumb armed
                 else
                     hsay "not armed: the bind mount failed, so nothing changed"
+                    hcrumb bind-mount-failed
                 fi
             fi ;;
     esac

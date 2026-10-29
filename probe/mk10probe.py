@@ -2247,47 +2247,73 @@ def describe_lights(bits):
     return ", ".join("%s %s" % (name, "ON" if bits >> i & 1 else "off") for i, name in enumerate(HID_LIGHTS))
 
 
-def usb_product_names():
-    """What the MK10's USB device calls itself: usbconfig.sh says whether the test ran there."""
-    names = []
+def usb_identity():
+    """(product, serial number) of each MK10 serial-gadget device plugged in. usbconfig.sh names the product, and
+    lunch.sh and usbconfig.sh leave a breadcrumb "mk10hid-<word>" in the serial number (see HID_CRUMBS)."""
+    found = []
     if sys.platform.startswith("linux"):
         import glob
-        for dev in glob.glob("/sys/bus/usb/devices/*"):
+
+        def read(dev, name):
             try:
-                ids = [open(os.path.join(dev, f)).read().strip().lower() for f in ("idVendor", "idProduct")]
-                if ids == ["%04x" % USB_VID, "%04x" % USB_PID]:
-                    names.append(open(os.path.join(dev, "product")).read().strip())
+                with open(os.path.join(dev, name)) as fh:
+                    return fh.read().strip()
             except OSError:
-                pass
+                return ""
+        for dev in glob.glob("/sys/bus/usb/devices/*"):
+            if [read(dev, "idVendor").lower(), read(dev, "idProduct").lower()] == ["%04x" % USB_VID, "%04x" % USB_PID]:
+                found.append((read(dev, "product"), read(dev, "serial")))
     elif sys.platform == "win32":
         import subprocess
         ps = ("Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -match '^USB\\\\VID_%04X&PID_%04X\\\\' } | "
-              "ForEach-Object { (Get-PnpDeviceProperty -InstanceId $_.InstanceId "
+              "ForEach-Object { $_.InstanceId + '|' + (Get-PnpDeviceProperty -InstanceId $_.InstanceId "
               "-KeyName DEVPKEY_Device_BusReportedDeviceDesc).Data }" % (USB_VID, USB_PID))
         try:
             out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True,
                                  text=True, timeout=30).stdout
-            names = [line.strip() for line in out.splitlines() if line.strip()]
         except (OSError, subprocess.SubprocessError):
-            pass
-    return names
+            out = ""
+        for line in out.splitlines():
+            if "|" in line:
+                instance, product = line.strip().split("|", 1)
+                tail = instance.rsplit("\\", 1)[-1]
+                found.append((product, "" if "&" in tail else tail))   # no serial: Windows makes up an "&" id
+    return found
+
+
+HID_CRUMBS = {
+    "armed": "lunch.sh armed the test, but the stand-in for /data/setusbconfig never ran: KeyboardDevice set up\n"
+             "USB some other way this boot.",
+    "refused-arm-file": "lunch.sh didn't like what was in hid-test-once. Run hid-install again.",
+    "missing-files": "lunch.sh didn't find all of hidtest/ on the card. Run hid-install again.",
+    "no-setusbconfig": "this MK10 has no /data/setusbconfig for the test to stand in for.",
+    "already-ours": "/data/setusbconfig was already the test's (shouldn't happen on a fresh boot).",
+    "bind-mount-failed": "the bind mount over /data/setusbconfig failed, so nothing changed.",
+    "ran": "usbconfig.sh started but stopped before trying to bind anything.",
+    "handed-over": "usbconfig.sh ran, but nothing it built would bind, so it handed over to Waveshare's script.",
+    "serial-only": "usbconfig.sh ran, but only the serial port would bind. Next: 'hid-install --arm-only\n"
+                   "--no-audio', the smaller set.",
+    "hid-without-audio": "HID bound, without the sound card.",
+    "hid-audio": "the full set bound.",
+    "hid": "serial + HID bound.",
+    "audio": "serial + sound card bound (HID wasn't asked for).",
+}
 
 
 def _hid_explain_absent():
-    names = usb_product_names()
-    if names:
-        print("The MK10's USB device calls itself: %s" % ", ".join(repr(n) for n in names))
-    for n in names:
-        if "FAILED" in n:
-            print("  -> The test ran, but only the serial port would bind. 'hid' can't read the log without HID,\n"
-                  "     so try 'hid-install --arm-only --no-audio' next boot: that is the smaller set.")
-            return
-        if "call-control" in n:
-            print("  -> The test ran, but no HID collection is visible. Windows may still be installing drivers\n"
-                  "     (give it a minute), or this hidapi build can't see it.")
-            return
-    print("  -> The test didn't run this boot. Either it wasn't armed (hid-install, then power-cycle), or\n"
-          "     KeyboardDevice never called /data/setusbconfig. Power-cycling again puts everything back.")
+    found = usb_identity()
+    for product, serial in found:
+        print("The MK10's USB device calls itself %r, serial number %r" % (product, serial or "(none)"))
+    crumbs = [serial.lower()[len("mk10hid-"):] for _, serial in found if serial.lower().startswith("mk10hid-")]
+    if not crumbs:
+        print("  -> No breadcrumb: lunch.sh's call-control section didn't run this boot (no arm file, or the card\n"
+              "     has an older lunch.sh). Run hid-install, then power-cycle.")
+        return
+    print("  -> " + HID_CRUMBS.get(crumbs[0], "breadcrumb %r, which this probe doesn't know" % crumbs[0]))
+    if crumbs[0] in ("hid-audio", "hid", "hid-without-audio"):
+        print("     But no HID collection is visible. Windows may still be installing drivers (give it a\n"
+              "     minute and try again), or this hidapi build can't see it.")
+    print("     Power-cycling again puts everything back.")
 
 
 def cmd_hid(args):

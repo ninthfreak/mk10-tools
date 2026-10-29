@@ -42,7 +42,7 @@ Waveshare MK10 "Multi-Functional AI Voice Control Panel": 10 LCD keys plus a 2.0
 
 | ID | What | Notes |
 |---|---|---|
-| `1D6B:0104` | Serial port (CDC-ACM gadget) | Pictures and key events. Generic Linux gadget ID. `KeyboardDevice` builds it with `/data/setusbconfig serial` |
+| `1D6B:0104` | Serial port (CDC-ACM gadget) | Pictures and key events. Generic Linux gadget ID. `KeyboardDevice` builds it with `/data/setusbconfig serial`, which also mounts configfs: `adbd`, which would otherwise, is disabled on the running device |
 | `4250:426F` | Keyboard chip (QMK) | Interfaces: MI_00 keyboard, MI_01 vendor HID, MI_02 mouse/system/consumer, MI_03 vendor HID |
 | `05E3:0610` | Internal hub | |
 
