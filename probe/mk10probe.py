@@ -2291,8 +2291,9 @@ HID_CRUMBS = {
     "bind-mount-failed": "the bind mount over /data/setusbconfig failed, so nothing changed.",
     "ran": "usbconfig.sh started but stopped before trying to bind anything.",
     "handed-over": "usbconfig.sh ran, but nothing it built would bind, so it handed over to Waveshare's script.",
-    "serial-only": "usbconfig.sh ran, but only the serial port would bind. Next: 'hid-install --arm-only\n"
-                   "--no-audio', the smaller set.",
+    "serial-only": "usbconfig.sh ran, but only the serial port would bind. On the stock kernel that is\n"
+                   "expected: the USB controller has one interrupt endpoint and the serial port takes it\n"
+                   "(docs/call-control.md, round 2).",
     "hid-without-audio": "HID bound, without the sound card.",
     "hid-audio": "the full set bound.",
     "hid": "serial + HID bound.",

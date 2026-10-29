@@ -8,7 +8,10 @@ to be scraped out of the apps.
 Status (October 2026):
 - **Round 1 on a real MK10 did not come up.** The product name stayed `Serial`. Cause: a bug in
   `usbconfig.sh`, explained under [Round 1](#round-1-configfs-wasnt-mounted).
-- **Round 2 is ready:** the bug is fixed, and every stage now leaves a breadcrumb the PC can read.
+- **Round 2 got further and hit a hardware-driver limit.** The serial number came back `mk10hid-serial-only`:
+  HID would not bind, with or without the sound card. The USB controller has only **one interrupt endpoint and
+  one isochronous endpoint**, and the serial port already holds the interrupt one. See
+  [Round 2](#round-2-one-interrupt-endpoint). The test as built cannot work on the stock kernel.
 
 ## Why the MK10 can do this without new firmware
 
@@ -117,6 +120,43 @@ The first run on a real MK10 came up as plain `Serial`. The card image explains 
 
 Now `usbconfig.sh` mounts configfs itself, as Waveshare's script does. The other stages may or may not have
 worked in round 1; round 1 left no way to tell, which is why the breadcrumbs exist now.
+
+### Round 2: one interrupt endpoint
+
+Result: product `MK10 call-control test FAILED`, serial number `mk10hid-serial-only`. Everything up to binding
+worked: `lunch.sh` armed, `KeyboardDevice` called the stand-in, configfs mounted. Then neither
+serial + HID + sound card nor serial + HID would bind, and only the serial port did.
+
+Allwinner's UDC driver has a static endpoint table. These are the capability bits read out of the kernel image
+(`boot.fex`, `Linux version 5.4.61 #229 Wed Oct 15 2025`, the `struct usb_ep` array in `.data`):
+
+| Endpoint | Type | Direction | maxpacket |
+|---|---|---|---|
+| ep1in, ep2in, ep5in | bulk | in | 512 |
+| ep1out, ep2out, ep5out | bulk | out | 512 |
+| ep3 | **iso** (the only one) | either | 1024 |
+| ep4 | **interrupt** (the only one) | either | 512 |
+
+What each function needs, and why that fails:
+- **ACM** (the serial port) needs bulk in, bulk out and **interrupt in** for its notifications. It takes ep4.
+- **The kernel's HID function** (5.4) needs **interrupt in and interrupt out**. Two interrupt endpoints, on a
+  controller that has one, so it can't bind even alone. (Making the OUT endpoint optional came in a later
+  kernel.)
+- **UAC1** with speaker and mic needs **two** iso endpoints, and there is one. That is why Waveshare's
+  `setusbconfig uac1` sets `p_chmask=0`: speaker only.
+- Gadget endpoint matching goes by these capability bits, so a bulk endpoint is never offered for interrupt
+  or iso.
+
+The `struct usb_ep` layout read out of the table matches mainline 5.4 exactly. That matters for the module
+route below.
+
+Ways forward, none built yet:
+
+| Route | What it keeps | Cost | Difficulty | Confidence |
+|---|---|---|---|---|
+| **Kernel module** that adds interrupt (and maybe iso) to some bulk endpoints' capability bits before the gadget binds, loaded only on an armed boot | everything: COM port, the kernel's HID, speaker; mic if iso works on a bulk endpoint | build against 5.4 sources with the MK10's `.config`; a mistake oopses that one boot | 4/5 | HID binds ~55%; mic ~35% |
+| **No kernel change:** serial over bulk only (`gser`, or a FunctionFS link with MS OS descriptors so Windows installs WinUSB itself) + HID written on FunctionFS with only an interrupt-in endpoint (lights arrive as SET_REPORT, which FunctionFS hands to userspace) | HID, speaker | MK10 Manager, the probe and the OpenDeck plugin move from a COM port to libusb; no mic (one iso endpoint) | 4/5 | ~60% |
+| **Host-side instead:** Teams' local third-party app API through the Manager; a virtual HID device (uhid) on Linux for Meet in Chrome | nothing on the device | no headset; different per app | 2–3/5 | per app |
 
 ## Running it
 
