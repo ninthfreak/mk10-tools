@@ -5,7 +5,10 @@ tells the device the call state through "lights" (off-hook, mute, ring, hold). T
 and mutes through "buttons" (hook switch, phone mute). Teams, Meet, Zoom and Webex all speak it. Nothing has
 to be scraped out of the apps.
 
-Status: **built and tested offline, not yet run on a real MK10** (October 2026).
+Status (October 2026):
+- **Round 1 on a real MK10 did not come up.** The product name stayed `Serial`. Cause: a bug in
+  `usbconfig.sh`, explained under [Round 1](#round-1-configfs-wasnt-mounted).
+- **Round 2 is ready:** the bug is fixed, and every stage now leaves a breadcrumb the PC can read.
 
 ## Why the MK10 can do this without new firmware
 
@@ -85,9 +88,35 @@ Audio goes through the MK10's own speaker and mic using Waveshare's own `arecord
 - Only the serial port is left, under the product name `MK10 call-control test FAILED`. The MK10 keeps working.
 - If even that fails, it hands over to Waveshare's own script.
 
-**If `KeyboardDevice` never calls `setusbconfig`:**
-- Nothing happens and the product name stays `Serial`.
-- `probe hid` reads the product name (sysfs on Linux, PowerShell on Windows) to tell these cases apart.
+**Breadcrumbs.** Each stage writes `mk10hid-<word>` into the gadget's USB **serial number**. Waveshare's
+`setusbconfig` never touches that field, so it survives even when Waveshare's script does the final setup.
+`probe hid` reads it (sysfs on Linux, the PnP instance ID on Windows) and explains it:
+
+| Serial number | Meaning |
+|---|---|
+| (none) | `lunch.sh`'s call-control section didn't run: no arm file, or an old `lunch.sh` on the card |
+| `mk10hid-armed` | armed, but the stand-in for `/data/setusbconfig` was never called |
+| `mk10hid-refused-arm-file`, `-missing-files`, `-no-setusbconfig`, `-already-ours`, `-bind-mount-failed` | `lunch.sh` didn't arm, for that reason |
+| `mk10hid-ran` | `usbconfig.sh` started, but stopped before trying to bind |
+| `mk10hid-hid-audio`, `-hid`, `-hid-without-audio`, `-serial-only` | the set that bound |
+| `mk10hid-handed-over` | nothing it built would bind, so Waveshare's script took over |
+
+A new serial number makes Windows treat the MK10 as a new device. It may get a new COM port number; MK10
+Manager and the probe find it by USB ID, so that doesn't matter to them.
+
+### Round 1: configfs wasn't mounted
+
+The first run on a real MK10 came up as plain `Serial`. The card image explains why:
+- `adbd` normally mounts configfs at boot (`S80adbd`).
+- On the running device, `/etc/rc.d/S80adbd` is an overlay **whiteout**. `qt_app1` disables `adbd`
+  on every boot, so after the first boot it never starts again.
+- So when `KeyboardDevice` runs `setusbconfig serial`, `/sys/kernel/config/usb_gadget` doesn't exist yet.
+  Waveshare's script mounts configfs itself.
+- `usbconfig.sh` took the missing directory as "no gadget support" and handed over to Waveshare's script.
+  That is exactly what produced `Serial`.
+
+Now `usbconfig.sh` mounts configfs itself, as Waveshare's script does. The other stages may or may not have
+worked in round 1; round 1 left no way to tell, which is why the breadcrumbs exist now.
 
 ## Running it
 

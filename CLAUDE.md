@@ -53,6 +53,8 @@ format, `docs/call-control.md` for the USB headset test, and `docs/research-note
     call-control test on the card and arms one boot as serial + HID headset + sound card. `hid [--log-only]`
     then talks to it over HID (needs `hidapi`; no serial port, so the Manager can stay open).
     `docs/call-control.md` is the design. Tests: `python -m pytest -q sdcard-tools/hidtest` (needs a C compiler).
+  - On the running MK10, configfs isn't mounted at boot (`adbd` is disabled, an overlay whiteout). Anything
+    touching `/sys/kernel/config` must mount it first. Round 1 of the USB test failed on exactly this.
   - The MK10's BusyBox (1.27.2) has no `setsid` or `nohup`. Check device scripts with its own ash:
     `qemu-arm-static -L <device /lib> -0 sh busybox -n script.sh`.
 - **What's playing:** `manager/nowplaying-windows.bat` (double-click), `run-windows.bat nowplaying` or

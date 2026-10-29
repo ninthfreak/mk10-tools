@@ -148,6 +148,16 @@ def fake_tool(path, body="exit 0"):
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
+def fake_mount(tools, calls):
+    """Records each call; mounting configfs makes usb_gadget appear, as the real one does."""
+    fake_tool(tools / "mount", 'echo "$*" >> "%s"\n'
+              '[ "$1 $2" = "-t configfs" ] && mkdir -p "$4/usb_gadget"\nexit 0' % calls)
+
+
+def mount_lines(calls):
+    return calls.read_text().splitlines() if calls.exists() else []
+
+
 @pytest.fixture
 def fake_root(tmp_path, relay_bin):
     root = tmp_path / "root"
@@ -166,6 +176,7 @@ def fake_root(tmp_path, relay_bin):
     tools.mkdir()
     for name in ("arecord", "aplay"):
         fake_tool(tools / name, "sleep 30")
+    fake_mount(tools, root / "mount-calls")
     env = dict(os.environ, MK10HID_ROOT=str(root), PATH="%s:%s" % (tools, os.environ["PATH"]))
     yield root, g, env
     subprocess.run(["pkill", "-f", str(root)], check=False)
@@ -186,6 +197,7 @@ def test_usbconfig_builds_serial_hid_and_audio(fake_root):
     assert (g / "idVendor").read_text().strip() == "0x1d6b" and (g / "idProduct").read_text().strip() == "0x0104"
     assert (g / "bDeviceClass").read_text().strip() == "0xEF"
     assert (g / "strings/0x409/product").read_text().strip() == "MK10 call-control test"
+    assert (g / "strings/0x409/serialnumber").read_text().strip() == "mk10hid-hid-audio"
     desc = (g / "functions/hid.usb0/report_desc").read_bytes()
     assert parse_descriptor(desc)[1] == [0x0B, 0xFF00]
     assert (g / "functions/hid.usb0/report_length").read_text().strip() == "64"
@@ -196,6 +208,21 @@ def test_usbconfig_builds_serial_hid_and_audio(fake_root):
     helpers = subprocess.run(["pgrep", "-af", "mk10loop.sh"], capture_output=True, text=True).stdout
     for helper in ("relay", "speaker", "mic"):
         assert "mk10loop.sh %s" % helper in helpers
+
+
+def test_usbconfig_mounts_configfs_itself(fake_root):
+    """A stock MK10 at boot: adbd is disabled, so nothing has mounted configfs (this is what round 1 hit)."""
+    root, g, env = fake_root
+    shutil.rmtree(root / "sys/kernel/config/usb_gadget")
+    (root / "tmp/mk10hid/mode").write_text("hid audio\n")
+    run_usbconfig(root, env, "serial")
+    assert mount_lines(root / "mount-calls") == ["-t configfs none %s" % (root / "sys/kernel/config")]
+    assert not (root / "orig-calls").exists()
+    assert (g / "strings/0x409/manufacturer").read_text().strip() == "Allwinner Technology Inc."
+    assert (g / "configs/c.1/MaxPower").read_text().strip() == "500"
+    assert sorted(p.name for p in (g / "configs/c.1").iterdir() if p.is_symlink()) == [
+        "acm.usb0", "hid.usb0", "uac1.usb0"]
+    assert (g / "strings/0x409/serialnumber").read_text().strip() == "mk10hid-hid-audio"
 
 
 def test_usbconfig_hid_only(fake_root):
@@ -213,6 +240,7 @@ def test_usbconfig_hands_over_when_nothing_binds(fake_root):
     run_usbconfig(root, env, "serial")
     assert (root / "orig-calls").read_text() == "serial\n"
     assert not [p for p in (g / "configs/c.1").iterdir() if p.is_symlink()]
+    assert (g / "strings/0x409/serialnumber").read_text().strip() == "mk10hid-handed-over"
     assert "even the serial port alone would not bind" in (root / "tmp/mk10hid/log.txt").read_text()
 
 
@@ -227,7 +255,7 @@ def test_usbconfig_passes_other_modes_through(fake_root):
 @pytest.fixture
 def fake_card(tmp_path, relay_bin):
     card, data, tmp = tmp_path / "card", tmp_path / "data", tmp_path / "tmp"
-    for d in (card / "hidtest", data, tmp):
+    for d in (card / "hidtest", data, tmp, tmp_path / "sys/kernel/config"):
         d.mkdir(parents=True)
     shutil.copy(relay_bin, card / "hidtest/mk10hid")
     for name in ("usbconfig.sh", "mk10loop.sh"):
@@ -236,13 +264,22 @@ def fake_card(tmp_path, relay_bin):
     (card / "config.json").write_text('{"deviceBl":30}')
     tools = tmp_path / "tools"
     tools.mkdir()
-    fake_tool(tools / "mount", 'echo "$*" >> "%s"' % (tmp_path / "mount-calls"))
+    fake_mount(tools, tmp_path / "mount-calls")
     script = open(os.path.join(HERE, os.pardir, "lunch-tests.sh")).read()
     script = (script.replace("/mnt/SDCARD", str(card)).replace("/data/setusbconfig", str(data / "setusbconfig"))
-              .replace("/tmp/mk10hid", str(tmp / "mk10hid")))
+              .replace("/tmp/mk10hid", str(tmp / "mk10hid")).replace("/sys/kernel/config", str(tmp_path / "sys/kernel/config")))
     (tmp_path / "lunch.sh").write_text(script)
     env = dict(os.environ, PATH="%s:%s" % (tools, os.environ["PATH"]))
     return tmp_path, card, tmp / "mk10hid", env
+
+
+def crumb(base):
+    path = base / "sys/kernel/config/usb_gadget/g1/strings/0x409/serialnumber"
+    return path.read_text().strip() if path.exists() else None
+
+
+def binds(base):
+    return [line for line in mount_lines(base / "mount-calls") if line.startswith("-o bind")]
 
 
 def run_lunch(base, env):
@@ -258,8 +295,8 @@ def test_lunch_arms_one_boot_with_a_bind_mount(fake_card):
     assert b"\r" not in (hid / "usbconfig.sh").read_bytes()
     assert os.access(hid / "usbconfig.sh", os.X_OK) and os.access(hid / "mk10hid", os.X_OK)
     assert (hid / "setusbconfig.orig").read_text() == "#!/bin/sh\n# Waveshare's\n"
-    assert (base / "mount-calls").read_text().split() == ["-o", "bind", str(hid / "usbconfig.sh"),
-                                                          str(base / "data/setusbconfig")]
+    assert "-o bind %s %s" % (hid / "usbconfig.sh", base / "data/setusbconfig") in mount_lines(base / "mount-calls")
+    assert crumb(base) == "mk10hid-armed"
     assert "armed for this boot: hid audio" in (card / "hid-test.log").read_text()
     assert "armed for this boot" in (hid / "log.txt").read_text()
 
@@ -267,7 +304,7 @@ def test_lunch_arms_one_boot_with_a_bind_mount(fake_card):
 def test_lunch_does_nothing_without_an_arm_file(fake_card):
     base, card, hid, env = fake_card
     run_lunch(base, env)
-    assert not (base / "mount-calls").exists() and not hid.exists()
+    assert not (base / "mount-calls").exists() and not hid.exists() and crumb(base) is None
 
 
 @pytest.mark.parametrize("mode", ["hid; reboot", "", "HID"])
@@ -275,8 +312,9 @@ def test_lunch_refuses_odd_arm_files(fake_card, mode):
     base, card, _, env = fake_card
     (card / "hid-test-once").write_text(mode + "\n")
     run_lunch(base, env)
-    assert not (base / "mount-calls").exists()
+    assert not binds(base)
     assert "refused" in (card / "hid-test.log").read_text()
+    assert crumb(base) == "mk10hid-refused-arm-file"
 
 
 def test_lunch_needs_the_files(fake_card):
@@ -284,8 +322,9 @@ def test_lunch_needs_the_files(fake_card):
     (card / "hidtest/mk10loop.sh").unlink()
     (card / "hid-test-once").write_text("hid\n")
     run_lunch(base, env)
-    assert not (base / "mount-calls").exists()
+    assert not binds(base)
     assert "needs mk10hid, usbconfig.sh and mk10loop.sh" in (card / "hid-test.log").read_text()
+    assert crumb(base) == "mk10hid-missing-files"
 
 
 def test_install_plan_arms_last_and_ships_lf_scripts():
@@ -300,3 +339,14 @@ def test_install_plan_arms_last_and_ships_lf_scripts():
         if dest.endswith(".sh"):
             assert b"\r" not in data and data.rstrip().endswith(b"exit 0") or b"\nexit 0\n" in data
     assert len(plan[0][1]) >= 4144                 # never shorter than the lunch.sh already on the card
+
+
+@pytest.mark.parametrize("serial, expect", [
+    ("mk10hid-armed", "never ran"),
+    ("MK10HID-HANDED-OVER", "handed over"),          # Windows may show the serial number in capitals
+    ("", "No breadcrumb"),
+])
+def test_probe_explains_the_breadcrumb(monkeypatch, capsys, serial, expect):
+    monkeypatch.setattr(mk10probe, "usb_identity", lambda: [("Serial", serial)])
+    mk10probe._hid_explain_absent()
+    assert expect in capsys.readouterr().out

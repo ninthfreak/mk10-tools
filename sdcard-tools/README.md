@@ -122,6 +122,10 @@ python mk10probe.py hid                # needs: pip install hidapi
   `--arm-only` skips the uploads when the files are already on the card.
 - Logs: `/tmp/mk10hid/log.txt` on the device, which `probe hid --log-only` reads back over HID, and one
   line per arming in `/mnt/SDCARD/hid-test.log`.
+- Breadcrumbs: when HID never comes up there is no log to read, so each stage also writes `mk10hid-<word>`
+  into the USB serial number, which `probe hid` reads and explains. The table is in `docs/call-control.md`.
+- On the running MK10, nothing has mounted configfs when `lunch.sh` or `setusbconfig` runs: `adbd` would,
+  but it is disabled. Mount it yourself before touching `/sys/kernel/config`, as Waveshare's script does.
 
 Tests: `python -m pytest -q sdcard-tools/hidtest` (Linux/macOS, needs a C compiler). They build the relay for
 the host, drive it through the probe's own HID code, and run both scripts against fake configfs and card

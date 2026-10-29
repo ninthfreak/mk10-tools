@@ -19,6 +19,10 @@ MODE=" $(cat "$D/mode" 2>/dev/null) "
 
 say() { echo "$(cut -d' ' -f1 /proc/uptime) gadget: $*" >> "$LOG"; }
 
+# A word in the USB serial number, which Waveshare's setusbconfig never touches: the PC can read how far
+# this got (probe hid) even when no HID function came up to carry the log.
+crumb() { echo "mk10hid-$1" > "$G/strings/0x409/serialnumber" 2>/dev/null; }
+
 stop_helpers() {
     # The relay must not hold /dev/hidg0 across an unbind (older kernels' HID gadget can crash on that),
     # and the audio loops hold the gadget's sound card. Stop the loops first so they don't restart them.
@@ -33,14 +37,28 @@ if [ "$1" != serial ]; then
 fi
 
 stop_helpers
+# On a stock MK10 nothing has mounted configfs yet: adbd would, but qt_app1 disables it at every boot.
+# Waveshare's script mounts it itself, and so do we.
+[ -d "$GADGETS" ] || mount -t configfs none "$R/sys/kernel/config" 2>> "$LOG"
 if [ ! -d "$GADGETS" ]; then
-    say "no configfs USB gadgets; handing over to Waveshare's setusbconfig"
+    say "no configfs USB gadgets even after mounting it; handing over to Waveshare's setusbconfig"
     exec "$D/setusbconfig.orig" serial
 fi
 say "KeyboardDevice asked for serial; building serial +$MODE"
 
 UDC_NAME=$(ls "$R/sys/class/udc" 2>/dev/null | head -n 1)
+if [ ! -d "$G" ]; then
+    # What Waveshare's script sets when it creates the gadget.
+    mkdir -p "$G/strings/0x409"
+    echo "Allwinner Technology Inc." > "$G/strings/0x409/manufacturer"
+fi
+if [ ! -d "$G/configs/c.1" ]; then
+    mkdir -p "$G/configs/c.1/strings/0x409"
+    echo 0xc0 > "$G/configs/c.1/bmAttributes"
+    echo 500 > "$G/configs/c.1/MaxPower"
+fi
 mkdir -p "$G/strings/0x409" "$G/configs/c.1/strings/0x409" "$G/functions/acm.usb0"
+crumb ran
 
 unlink_all() {
     for link in "$G"/configs/c.1/*; do
@@ -85,27 +103,37 @@ case "$MODE" in *" audio "*)
     WANT="$WANT uac1.usb0" ;;
 esac
 
+# $1: the functions, in order. $2: the word the serial number carries if this is the set that binds (strings
+# are read at bind time, so it is written first).
 bind() {
     unlink_all
+    crumb "$2"
     for f in $1; do
         ln -s "$G/functions/$f" "$G/configs/c.1/$f" || return 1
     done
     echo "$UDC_NAME" > "$G/UDC" 2>> "$LOG"
 }
 
-if bind "$WANT"; then
+case "$WANT" in
+    *hid*uac1*) WORD=hid-audio ;;
+    *hid*) WORD=hid ;;
+    *uac1*) WORD=audio ;;
+    *) WORD=serial ;;
+esac
+if bind "$WANT" "$WORD"; then
     GOT=$WANT
-elif [ "$WANT" = "acm.usb0 hid.usb0 uac1.usb0" ] && bind "acm.usb0 hid.usb0"; then
+elif [ "$WANT" = "acm.usb0 hid.usb0 uac1.usb0" ] && bind "acm.usb0 hid.usb0" "hid-without-audio"; then
     GOT="acm.usb0 hid.usb0"
     say "the full set would not bind; left the sound card out"
 else
     echo "MK10 call-control test FAILED" > "$G/strings/0x409/product"
-    if bind "acm.usb0"; then
+    if bind "acm.usb0" "serial-only"; then
         GOT="acm.usb0"
         say "only the serial port would bind"
     else
         say "even the serial port alone would not bind; handing over to Waveshare's setusbconfig"
         unlink_all
+        crumb handed-over
         exec "$D/setusbconfig.orig" serial
     fi
 fi
