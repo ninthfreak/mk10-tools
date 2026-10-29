@@ -149,18 +149,20 @@ def _state(when, value, bg, icon, label=None):
 
 
 def teams_page() -> Page:
-    """One key each for the microphone, the speakers and the camera, each naming its device, and the whole call
-    on the small screen. In a call the microphone key is Teams' mute, and the PC microphone follows it."""
+    """One key each for the microphone, the speakers and the camera, each naming its device, a sharing key, and
+    the whole call on the small screen. In a call the microphone key is Teams' mute, and the PC microphone
+    follows it."""
     mic = _key("{in_device:short}", "microphone", DARK, [{"type": "teams", "mode": "mic"}])
     mic["states"] = [_state("teams_muted", "yes", ORANGE, "microphone-off"),     # muted in Teams
                      _state("input_muted", "yes", ORANGE, "microphone-off"),     # or the PC microphone is
                      _state("teams_muted", "no", BLUE, "microphone")]            # live in a call
     sound = _key("{out_device:short}", "volume", DARK, [{"type": "audio", "target": OUTPUT, "mode": "toggle_mute"}])
     sound["states"] = [_state("output_muted", "yes", ORANGE, "volume-off")]
-    camera = _key("Camera", "video-off", DARK, [{"type": "teams", "mode": "camera_toggle"}])
-    camera["states"] = [_state("teams_camera", "yes", BLUE, "video", "Camera on"),
-                        _state("teams_camera", "no", DARK, "video-off", "Camera off")]
-    keys = [mic, sound, camera, None, _key("Back", "arrow-back-up", DARK, [{"type": "page", "mode": "back"}])]
+    camera = _key("{teams_camera_device:Camera}", "video-off", DARK, [{"type": "teams", "mode": "camera_toggle"}])
+    camera["states"] = [_state("teams_camera", "yes", BLUE, "video")]
+    share = _key("Share", "screen-share", DARK, [{"type": "teams", "mode": "share_toggle"}])
+    share["states"] = [_state("teams_sharing", "yes", ORANGE, "screen-share", "Sharing {teams_shared}")]
+    keys = [mic, sound, camera, share, _key("Back", "arrow-back-up", DARK, [{"type": "page", "mode": "back"}])]
     rule = {"enabled": True, "when": "teams_call", "value": "yes", "page": None}
     return Page(_pad(keys), {"face": "teams", "options": {}}, rule, "Show this page whenever I'm in a Teams call")
 
@@ -178,15 +180,19 @@ TEMPLATES = [
                     "Slack can't tell us whether you're muted inside a huddle, and can't start or join one. "
                     "The microphone key mutes the microphone itself, which works everywhere.")),
     Template("teams", "Microsoft Teams",
-             "One key each for the microphone, the speakers and the camera, each naming its device. Orange is "
-             "muted, blue is live or on. The small screen shows the meeting, how long it's run, and the "
-             "microphone, speakers, camera, sharing and raised hand.",
+             "One key each for the microphone, the speakers and the camera, each naming the device Teams is "
+             "using, and a sharing key that says what you're sharing. Orange is muted or sharing, blue is live "
+             "or on. The small screen shows the meeting, how long it's run, and the microphone, speakers, "
+             "camera, sharing and raised hand.",
              teams_page,
              setup=("Windows only, and Teams has to be in English: the keys read Teams' window the way a screen "
                     "reader does.",
                     "In a call the microphone key is Teams' mute and the PC microphone follows it (switch that off "
                     "on the Device and app tab). Outside a call it mutes the PC microphone.",
-                    "The camera key only works in a call. It can't name the camera yet.")),
+                    "The camera and share keys only work in a call. The camera key names the camera Teams is set "
+                    "to use while it's plugged in; when it isn't, Teams picks another and doesn't say which.",
+                    "The share key stops sharing. When you aren't sharing it opens Teams' share picker: what to "
+                    "share is chosen there.")),
 ]
 
 

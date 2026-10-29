@@ -51,3 +51,52 @@ class FakeAudio(_VolumeMath):
                                           cur.volume if volume is None else volume, cur.level)
             if level is not None:
                 self.levels[target] = level
+
+
+class MultiDeviceAudio(_VolumeMath):
+    """Two devices on each side, a default for each, and apps that stream to devices of their own choosing,
+    the way Teams picks its own headset whatever Windows' default is."""
+
+    note = ""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.devices = {"spk": Endpoint("Speakers (Realtek(R) Audio)", False, 60, 0.0),
+                        "hp": Endpoint("Headphones (Jabra Evolve2 65)", False, 40, 0.0),
+                        "mic": Endpoint("Microphone (Realtek(R) Audio)", True, 70, 0.0),
+                        "hs": Endpoint("Headset Microphone (Jabra Evolve2 65)", False, 80, 0.0)}
+        self.defaults = {OUTPUT: "spk", INPUT: "mic"}
+        self.device_ids = {OUTPUT: None, INPUT: None}
+        self.streams: dict[str, dict] = {}      # app -> {side: device id it's streaming to, or None}
+
+    def _id(self, target):
+        return self.device_ids.get(target) or self.defaults[target]
+
+    def read(self, want_levels=frozenset()) -> AudioState:
+        with self.lock:
+            return AudioState(self.devices[self._id(OUTPUT)], self.devices[self._id(INPUT)], True, "")
+
+    def apply(self, target, mode, value=0):
+        with self.lock:
+            dev = self._id(target)
+            cur = self.devices[dev]
+            mute, volume = self._new_values(cur, mode, value)
+            self.devices[dev] = Endpoint(cur.name, cur.muted if mute is None else mute,
+                                         cur.volume if volume is None else volume, cur.level)
+        return True, ""
+
+    def set_device_ids(self, ids):
+        with self.lock:
+            self.device_ids = {OUTPUT: ids.get(OUTPUT), INPUT: ids.get(INPUT)}
+
+    def app_devices(self, name_part):
+        with self.lock:
+            found = self.streams.get(name_part, {})
+            return {OUTPUT: found.get(OUTPUT), INPUT: found.get(INPUT)}
+
+    def close(self):
+        pass
+
+    def muted(self, dev):
+        with self.lock:
+            return self.devices[dev].muted
