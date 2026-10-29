@@ -7,6 +7,7 @@ from datetime import datetime
 from ..system.audio import INPUT, OUTPUT, AudioState
 from ..system.nowplaying import Track, format_time as format_track_time
 from ..system.slack import SlackState
+from ..system.teams import TeamsState
 
 PLACEHOLDER = re.compile(r"\{([a-zA-Z_]+)(?::([^{}]*))?\}")
 
@@ -29,7 +30,9 @@ HELP = (
     "{slack_presence}  {slack_status}  {slack_team}  {slack_user}\n"
     "{slack_huddle:In a huddle|Free}  your own two words again\n"
     "{track}  {artist}  {album}  {player}  what's playing now\n"
-    "{track_time}  {track_length}  how far in, and how long"
+    "{track_time}  {track_length}  how far in, and how long\n"
+    "{teams_call}  “in a call”, or nothing      {teams_mic}  “muted” / “live” in a Teams call\n"
+    "{teams_mic:Muted|Live}  your own two words"
 )
 
 
@@ -46,6 +49,7 @@ class RenderContext:
     audio: AudioState = field(default_factory=AudioState)
     slack: SlackState = field(default_factory=SlackState)
     now_playing: Track = field(default_factory=Track)
+    teams: TeamsState = field(default_factory=lambda: TeamsState(available=False))
 
 
 def format_time(now: datetime, h24: bool, seconds: bool = False) -> str:
@@ -106,9 +110,24 @@ def expand(text: str, ctx: RenderContext, output: str = "") -> str:
             return _slack(name, arg, ctx.slack or SlackState())
         if name in ("track", "artist", "album", "player", "track_time", "track_length", "track_status"):
             return _now_playing(name, ctx.now_playing or Track())
+        if name in ("teams_call", "teams_mic"):
+            return _teams(name, arg, ctx.teams or TeamsState(available=False))
         return m.group(0)
 
     return PLACEHOLDER.sub(sub, text)
+
+
+def _teams(name: str, arg, t: TeamsState) -> str:
+    if not t.available or not t.in_call:
+        return ""
+    if name == "teams_call":
+        return _two_words(arg, "in a call")[0]
+    if t.muted is None:
+        return ""
+    words = [w.strip() for w in (arg or "").split("|")]
+    muted = words[0] if words and words[0] else "muted"
+    live = words[1] if len(words) > 1 and words[1] else "live"
+    return muted if t.muted else live
 
 
 def _two_words(arg, when_true: str) -> tuple[str, str]:

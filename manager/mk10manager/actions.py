@@ -47,6 +47,12 @@ ACTION_TYPES = {
               help="A Slack ID: C… for a channel, U… for a person. Copy it from Slack's own menus."),
         Field("message", "Message", "multiline", "", show_if=("mode", ("post",))),
     ]),
+    "teams": ("Microsoft Teams", [
+        Field("mode", "Do", "choice", "mute_on",
+              [("mute_on", "Mute me"), ("mute_off", "Unmute me"), ("toggle", "Switch mute")],
+              help="Presses Teams' own mic button, but only after reading whether you're muted, and then checks "
+                   "Teams changed. Outside a call, or when it can't tell, it does nothing."),
+    ]),
     "media": ("Media key", [
         Field("key", "Key", "choice", "play_pause", inputs.MEDIA_KEYS),
     ]),
@@ -110,6 +116,9 @@ def summary(action: dict, page_name=lambda pid: pid) -> str:
         return "Type  “%s”" % (s[:30] + ("..." if len(s) > 30 else ""))
     if t == "media":
         return dict(inputs.MEDIA_KEYS).get(a["key"], a["key"])
+    if t == "teams":
+        return {"mute_on": "Teams: mute me", "mute_off": "Teams: unmute me",
+                "toggle": "Teams: switch mute"}.get(a["mode"], label)
     if t == "slack":
         mode = a["mode"]
         if mode == "status":
@@ -222,10 +231,11 @@ class ActionRunner(QObject):
     ui_action = Signal(dict)
     failed = Signal(str)
 
-    def __init__(self, audio=None, slack=None, parent=None):
+    def __init__(self, audio=None, slack=None, teams=None, parent=None):
         super().__init__(parent)
         self.audio = audio
         self.slack = slack
+        self.teams = teams
         self._q = queue.Queue()
         self._thread = threading.Thread(target=self._loop, name="actions", daemon=True)
         self._thread.start()
@@ -275,6 +285,11 @@ class ActionRunner(QObject):
             ok, msg = inputs.media(a.get("key", "play_pause"))
         elif t == "slack":
             ok, msg = self._slack(a)
+        elif t == "teams":
+            if self.teams is None:
+                ok, msg = False, "Teams isn't set up in this app."
+            else:
+                ok, msg = self.teams.command(a.get("mode") or "mute_on")
         elif t == "audio":
             if self.audio is None:
                 ok, msg = False, audio_mod.NullAudio.note

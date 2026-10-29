@@ -20,13 +20,14 @@ from .system.activewin import ActiveAppWatcher
 from .system.audio import AudioMonitor
 from .system.nowplaying import NowPlayingMonitor
 from .system.slack import SlackMonitor, channel_ids, read_token
+from .system.teams import TeamsMonitor
 
 NOT_UNDOABLE = ("variables", "seen_apps")
 # Device and app settings are changed live on the Device tab; undo should never roll them back.
 NOT_UNDOABLE_SETTINGS = ("brightness", "port", "press_feedback", "time_24h", "font_family", "start_minimized",
                          "tray_hint_shown", "audio_levels", "meter_fps", "slack_enabled", "slack_team_id",
                          "slack_channels", "slack_unread_source", "slack_poll_seconds",
-                         "nowplaying_enabled", "nowplaying_art")
+                         "nowplaying_enabled", "nowplaying_art", "teams_enabled")
 SLOW_TICK_MS = 200          # how often we look at the clock and the message timer when nothing is animating
 _NO_RESULT = object()
 
@@ -83,7 +84,7 @@ class Controller(QObject):
     def __init__(self, config: Config, device: DeviceManager | None = None, watcher: ActiveAppWatcher | None = None,
                  renderer: Renderer | None = None, audio: AudioMonitor | None = None,
                  slack: SlackMonitor | None = None, nowplaying: NowPlayingMonitor | None = None,
-                 parent=None):
+                 teams: TeamsMonitor | None = None, parent=None):
         super().__init__(parent)
         self.config = config
         self.renderer = renderer or Renderer()
@@ -93,7 +94,8 @@ class Controller(QObject):
         self.audio.set_levels_enabled(bool(config.settings.get("audio_levels", True)))
         self.slack = slack or SlackMonitor()
         self.nowplaying = nowplaying or NowPlayingMonitor()
-        self.runner = ActionRunner(self.audio, self.slack)
+        self.teams = teams or TeamsMonitor()
+        self.runner = ActionRunner(self.audio, self.slack, self.teams)
         self.layout = DeviceLayout.default()
         self.page_id = config.default_page()["id"]
         self.prev_page_id = None
@@ -132,6 +134,7 @@ class Controller(QObject):
         self.audio.changed.connect(self._on_audio)
         self.slack.changed.connect(self._on_slack)
         self.nowplaying.changed.connect(self._on_nowplaying)
+        self.teams.changed.connect(self._on_teams)
         self.runner.ui_action.connect(self._on_ui_action)
         self.runner.failed.connect(self.notify.emit)
         self._output_ready.connect(self._on_output)
@@ -145,6 +148,8 @@ class Controller(QObject):
         self.slack.start()
         self.apply_nowplaying_settings()
         self.nowplaying.start()
+        self.apply_teams_settings()
+        self.teams.start()
         self._update_live_meters()
         self._tick.start()
         self.refresh(force=True)
@@ -155,6 +160,7 @@ class Controller(QObject):
         self.audio.stop()
         self.slack.stop()
         self.nowplaying.stop()
+        self.teams.stop()
         self.device.stop()
         if self._save_timer.isActive():
             self._save_timer.stop()
@@ -179,7 +185,7 @@ class Controller(QObject):
                              title=self.title, page=self.page["name"], variables=dict(self.config.variables),
                              outputs=self.outputs, font_family=s.get("font_family") or "",
                              audio=self.audio.state, slack=self.slack.state,
-                             now_playing=self.nowplaying.track)
+                             now_playing=self.nowplaying.track, teams=self.teams.state)
 
     # ---------------------------------------------------------------- drawing
     def refresh(self, force: bool = False):
@@ -273,6 +279,10 @@ class Controller(QObject):
         self._evaluate_rules()
 
     def _on_slack(self):
+        self._dirty = True
+        self._evaluate_rules()
+
+    def _on_teams(self):
         self._dirty = True
         self._evaluate_rules()
 
@@ -427,7 +437,7 @@ class Controller(QObject):
     def _evaluate_rules(self):
         target = rules_mod.evaluate(self.config.rules, self.app, self.title, self.config.variables,
                                     audio=self.audio.state, slack=self.slack.state,
-                                    track=self.nowplaying.track)
+                                    track=self.nowplaying.track, teams=self.teams.state)
         if target is None and self.config.settings.get("fallback_to_default", True) and self.config.rules:
             target = self.config.default_page()["id"]
         if target == self._last_rule_result:
@@ -511,6 +521,7 @@ class Controller(QObject):
         self.apply_audio_settings()
         self.apply_slack_settings()
         self.apply_nowplaying_settings()
+        self.apply_teams_settings()
         self.edited(undoable=False)
 
     def apply_slack_settings(self):
@@ -525,6 +536,9 @@ class Controller(QObject):
         s = self.config.settings
         self.nowplaying.configure(bool(s.get("nowplaying_enabled", True)),
                                   bool(s.get("nowplaying_art", True)))
+
+    def apply_teams_settings(self):
+        self.teams.configure(bool(self.config.settings.get("teams_enabled", True)))
 
     def apply_audio_settings(self):
         """Called when the live-meter switch or the meter speed changes on the Device tab."""
