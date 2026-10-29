@@ -30,11 +30,16 @@ CONDITIONS = [
     ("playing", "Music or video is"),
     ("teams_call", "Teams call"),
     ("teams_muted", "Teams microphone is"),
+    ("teams_camera", "Teams camera is"),
+    ("teams_sharing", "Teams screen sharing"),
+    ("teams_hand", "Teams hand is"),
 ]
 
 AUDIO_CONDITIONS = ("output_muted", "input_muted")
 SLACK_CONDITIONS = ("slack_huddle", "slack_dnd", "slack_presence", "slack_unread")
-TEAMS_CONDITIONS = ("teams_call", "teams_muted")
+TEAMS_CONDITIONS = ("teams_call", "teams_muted", "teams_camera", "teams_sharing", "teams_hand")
+#: Teams conditions that only mean something during a call, and only when Teams' button said which.
+TEAMS_FIELDS = {"teams_muted": "muted", "teams_camera": "camera", "teams_sharing": "sharing", "teams_hand": "hand"}
 MUTE_CHOICES = [("yes", "muted"), ("no", "not muted")]
 
 #: Conditions whose value is picked from a short list. The editor builds one combo box from this.
@@ -48,6 +53,9 @@ CHOICE_CONDITIONS = {
     "playing": [("yes", "playing"), ("no", "not playing")],
     "teams_call": [("yes", "I'm in one"), ("no", "I'm not in one")],
     "teams_muted": [("yes", "muted"), ("no", "live")],
+    "teams_camera": [("yes", "on"), ("no", "off")],
+    "teams_sharing": [("yes", "on"), ("no", "off")],
+    "teams_hand": [("yes", "raised"), ("no", "down")],
 }
 CONDITION_DEFAULTS = {"when": "app", "value": "", "name": "mode", "from": "09:00", "to": "17:00"}
 
@@ -130,8 +138,8 @@ def matches(cond: dict, app: str = "", title: str = "", variables: dict | None =
             return False
         if when == "teams_call":
             return teams.in_call == wants_muted(cond.get("value"))
-        # Muted or live only means something during a call, and only when Teams' button said which.
-        return teams.in_call and teams.muted is not None and teams.muted == wants_muted(cond.get("value"))
+        now_value = getattr(teams, TEAMS_FIELDS[when])
+        return teams.in_call and now_value is not None and now_value == wants_muted(cond.get("value"))
     return False
 
 
@@ -166,6 +174,10 @@ def describe(cond: dict) -> str:
         return "a Teams call: %s" % dict(CHOICE_CONDITIONS["teams_call"]).get(cond.get("value") or "yes", "?")
     if when == "teams_muted":
         return "Teams has me %s" % dict(CHOICE_CONDITIONS["teams_muted"]).get(cond.get("value") or "yes", "?")
+    if when in ("teams_camera", "teams_sharing", "teams_hand"):
+        lead = {"teams_camera": "my Teams camera is", "teams_sharing": "Teams screen sharing is",
+                "teams_hand": "my Teams hand is"}[when]
+        return "%s %s" % (lead, dict(CHOICE_CONDITIONS[when]).get(cond.get("value") or "yes", "?"))
     return "?"
 
 

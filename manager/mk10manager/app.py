@@ -123,9 +123,24 @@ def run_nowplaying_report() -> int:
 
 
 def run_teams_report() -> int:
-    """Print what Teams exposes to UI Automation, and save it. Read-only: nothing is pressed."""
-    from .system.teams import report
-    return _print_report(report(), "teams-report.txt")
+    """Print what Teams exposes to UI Automation, and save it, plus the whole accessibility tree in its own
+    timestamped file (it holds the names of people in the meeting). Read-only: nothing is pressed."""
+    import time
+    from .system.teams import report, tree_report
+    text = report()
+    if sys.stdout is not None:
+        try:
+            print("Reading the whole Teams window as well; that takes a few seconds...", flush=True)
+        except (OSError, ValueError):
+            pass
+    tree_path = config_dir() / ("teams-tree-%s.txt" % time.strftime("%Y%m%d-%H%M%S"))
+    try:
+        config_dir().mkdir(parents=True, exist_ok=True)
+        tree_path.write_text(tree_report(), encoding="utf-8")
+        text += "\n\nThe whole tree (it includes the names of people in the meeting) is in:\n%s" % tree_path
+    except Exception as e:
+        text += "\n\n(Couldn't read or save the whole tree: %s)" % e
+    return _print_report(text, "teams-report.txt")
 
 
 def _print_report(text: str, filename: str) -> int:

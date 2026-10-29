@@ -11,6 +11,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPen, 
 from ..schema import Field, fill_defaults
 from ..system.audio import INPUT, OUTPUT
 from ..system.nowplaying import format_time as format_track_time
+from ..system.teams import short_device_name
 from . import meters
 from .template import HELP, RenderContext, expand, format_time, uses_seconds
 
@@ -521,7 +522,7 @@ class SlackFace(Face):
         audio = getattr(ctx, "audio", None)
         mic = v["show_mic"] and audio is not None and audio.available
         label_font = make_font(ctx, min(16.0, area.width() * 0.075), True)
-        value_px = min(26.0, area.width() * 0.12)
+        value_px = min(float(v.get("row_px") or 26.0), area.width() * 0.12)
         lh = text_height(label_font)
         row_h = max(lh, text_height(make_font(ctx, value_px))) + 4
         bar_h = max(10.0, min(20.0, area.height() * 0.075)) if mic else 0.0
@@ -572,6 +573,82 @@ class SlackFace(Face):
         while text and fm.horizontalAdvance(text + "…") > width:
             text = text[:-1]
         return text + "…"
+
+
+class TeamsFace(SlackFace):
+    """A Teams call at a glance: the meeting, how long it's run, and every switch that matters in it."""
+
+    id = "teams"
+    label = "Microsoft Teams"
+    options = [
+        Field("bg", "Background", "color", "#000000"),
+        Field("top_text", "Text at the top during a call", "template", "{teams_meeting}", help=COMMON_TEXT_HELP),
+        Field("idle_text", "Text at the top otherwise", "template", "{time}", help=COMMON_TEXT_HELP),
+        Field("text_color", "Text colour", "color", LIGHT),
+        Field("text_size", "Text size", "int", 26, minimum=10, maximum=60),
+        Field("accent", "Highlight colour", "color", BLUE),
+        Field("busy_color", "Colour when muted, sharing or hand up", "color", ORANGE),
+        Field("show_devices", "Name the microphone and speakers", "bool", False,
+              help="The keys on the Teams page already name them."),
+        Field("row_px", "Row text size", "int", 21, minimum=12, maximum=30),
+    ]
+
+    def needs_seconds(self, opts):
+        v = self.values(opts)
+        return uses_seconds(v["top_text"]) or uses_seconds(v["idle_text"])
+
+    def live_targets(self, opts) -> set:
+        return set()
+
+    def paint(self, p, rect, opts, ctx, output=""):
+        v = self.values(opts)
+        p.fillRect(rect, QColor(v["bg"]))
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.TextAntialiasing)
+        area = rect.adjusted(MARGIN, MARGIN, -MARGIN, -MARGIN)
+        teams = getattr(ctx, "teams", None)
+        audio = getattr(ctx, "audio", None)
+        in_call = bool(teams is not None and teams.available and teams.in_call)
+
+        title = expand(v["top_text"] if in_call else v["idle_text"], ctx, output).replace("\n", " ")
+        if title:
+            tf = fit_font(ctx, title, v["text_size"], area.width(), True, 14)
+            h = text_height(tf) + 6
+            draw_text(p, QRectF(area.left(), area.top(), area.width(), h),
+                      self._clip(title, tf, area.width()), tf, v["text_color"], wrap=False)
+            area.setTop(area.top() + h + 4)
+
+        busy, accent = v["busy_color"], v["accent"]
+        rows = []
+        if teams is None or not teams.available:
+            rows.append(("TEAMS", ((teams.note if teams else "") or "can't be read")[:40], GREY, False))
+        elif in_call:
+            rows.append(("CALL", format_track_time(teams.call_seconds()), accent, False))
+        else:
+            rows.append(("CALL", "None" if teams.running else "Teams closed", GREY, False))
+
+        muted = teams.muted if in_call and teams.muted is not None else \
+            (audio.input.muted if audio is not None and audio.available else None)
+        mic = {True: "Muted", False: "Live", None: "?"}[muted]
+        if v["show_devices"] and audio is not None and audio.available and audio.input.name:
+            mic += " · " + short_device_name(audio.input.name)
+        rows.append(("MIC", mic, busy if muted else accent, bool(muted)))
+        if audio is not None and audio.available:
+            out = audio.output
+            words = short_device_name(out.name) if (v["show_devices"] and out.name) else ""
+            if out.muted:
+                words = "Muted · " + words if words else "Muted"
+            rows.append(("OUT", words or "On", busy if out.muted else accent, bool(out.muted)))
+        if in_call:
+            if teams.camera is not None:
+                rows.append(("CAMERA", "On" if teams.camera else "Off", accent if teams.camera else GREY, False))
+            if teams.sharing is not None:
+                rows.append(("SHARING", "Yes" if teams.sharing else "No", busy if teams.sharing else GREY,
+                             bool(teams.sharing)))
+            if teams.hand is not None:
+                rows.append(("HAND", "Raised" if teams.hand else "Down", busy if teams.hand else GREY,
+                             bool(teams.hand)))
+        self._rows(p, area, rows, dict(v, show_mic=False, live=False), ctx)
 
 
 class NowPlayingFace(Face):
@@ -718,6 +795,6 @@ class BlankFace(Face):
 
 
 def make_faces(icons) -> dict[str, Face]:
-    faces = [AnalogClock(), DigitalClock(), TextFace(), AudioFace(), SlackFace(), NowPlayingFace(),
+    faces = [AnalogClock(), DigitalClock(), TextFace(), AudioFace(), SlackFace(), TeamsFace(), NowPlayingFace(),
              ImageFace(icons), BlankFace()]
     return {f.id: f for f in faces}

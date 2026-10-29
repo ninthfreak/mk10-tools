@@ -78,17 +78,29 @@ For Slack: `{slack_huddle}` `{slack_dnd}` `{slack_unread}` `{slack_mentions}` `{
 
 For what's playing: `{track}` `{artist}` `{album}` `{player}` `{track_time}` `{track_length}`.
 
-For Teams: `{teams_call}` ("in a call", or nothing), `{teams_mic}` ("muted" or "live" during a call), and
-`{teams_mic:Muted|Live}` for your own two words.
+For Teams, during a call: `{teams_call}`, `{teams_mic}` (muted / live), `{teams_camera}` (on / off),
+`{teams_sharing}`, `{teams_hand}`, `{teams_meeting}` and `{teams_time}` (how long it has run); any of the
+on/off ones take your own two words, like `{teams_mic:Muted|Live}`. `{in_device:short}` and
+`{out_device:short}` give just the part of a device's name in brackets, e.g. "Jabra Evolve2 65".
 
 A Text face can also run a command every few seconds and show its output with `{output}`.
 
 ## Microsoft Teams
 
-Keys can show whether you're in a Teams call and whether **Teams** has you muted, and can mute or unmute you
-**explicitly**: *Mute me* only presses Teams' mic button if you're live, *Unmute me* only if you're muted, and
-both read Teams again afterwards to check it changed. Outside a call, or when the state can't be read, they do
-nothing rather than guess. The **Microsoft Teams** template on New page sets all of this up.
+The **Microsoft Teams** template on New page gives one key each for the **microphone**, the **speakers** and the
+**camera**. The microphone and speaker keys name their device, and the small screen shows the whole call: the
+meeting's name, how long it has run, and the microphone, speakers, camera, screen sharing and raised hand. Orange
+is muted (or sharing, or hand up); blue is live or on.
+
+- **One microphone key.** In a call it's Teams' own mute; outside a call it mutes the PC microphone.
+- **The PC microphone follows Teams** during a call, and Teams follows the PC: mute in Teams' window and the
+  microphone itself mutes; mute with a keyboard's mic key and Teams mutes. When a call starts the PC takes
+  Teams' state, because that's what people see. If the two still disagree after a follow, the live side is
+  muted, never the muted side unmuted. Switch it off on the **Device and app** tab.
+- **The camera key** turns your Teams camera on and off, in a call only. It can't name the camera yet.
+- Every Teams command reads first, presses Teams' own button only if it's needed, and reads again to check it
+  changed. Outside a call, or when the state can't be read, it does nothing rather than guess. Single actions
+  are there too for your own keys: mute me, unmute me, camera on, camera off.
 
 How: Microsoft retired Teams' local API for hardware in 2026, so this reads the Teams window the way a screen
 reader does (Windows UI Automation): the in-call mic button and its name, "Mute mic" or "Unmute mic". It presses
@@ -98,9 +110,11 @@ that same button, so Teams doesn't need focus and no shortcut is sent. The appro
 - **Windows only.** Teams on Linux runs in a browser; that isn't read yet.
 - **English Teams only**, for now: the state comes from the button's name. In another language the keys show
   "in a call" but not muted or live, and *Mute me* / *Unmute me* refuse to press.
-- If a Teams update renames the button, the keys stop changing. Double-click **`teams-windows.bat`** (or run
-  `run-windows.bat teams`) **during a call**: it lists what Teams exposes — the mic button, its name, and every
-  button in the call window — presses nothing, and saves it to `teams-report.txt` in the settings folder.
+- If a Teams update renames the buttons, the keys stop changing. Double-click **`teams-windows.bat`** (or run
+  `run-windows.bat teams`) **during a call**: it lists what Teams exposes — the call buttons, their names, every
+  button in the call window, and the cameras Windows knows — presses nothing, and saves it to
+  `teams-report.txt` in the settings folder. It also saves the call window's whole accessibility tree to a
+  `teams-tree-<time>.txt` file there. That one holds the names of the people in the meeting.
 
 The switch is on the **Device and app** tab, with a line saying what the app sees right now.
 
