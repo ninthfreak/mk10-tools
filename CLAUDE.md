@@ -58,6 +58,9 @@ format, `docs/call-control.md` for the USB headset test, and `docs/research-note
     touching `/sys/kernel/config` must mount it first. Round 1 of the USB test failed on exactly this.
   - The MK10's BusyBox (1.27.2) has no `setsid` or `nohup`. Check device scripts with its own ash:
     `qemu-arm-static -L <device /lib> -0 sh busybox -n script.sh`.
+- **Teams:** `manager/teams-windows.bat` (double-click, during a call), `run-windows.bat teams` prints what UI
+  Automation sees in Teams (the `microphone-button`, its name, every button in the call window) and saves
+  `teams-report.txt`. Read-only. Use it first when the Teams keys stop following Teams.
 - **What's playing:** `manager/nowplaying-windows.bat` (double-click), `run-windows.bat nowplaying` or
   `./run-linux.sh nowplaying` prints what this PC reports (packages found, track, position, artwork) and
   saves it to `nowplaying-report.txt` in the settings folder. Use it rather than guessing when the Now
@@ -117,7 +120,9 @@ editor forms through `schema.Field`. `render/meters.py` draws level meters behin
 `system/slack.py` is the Slack Web API client and its polling monitor; the token lives in its own 0600 file in
 the settings folder, never in `config.json`. `system/nowplaying.py` reads whatever the system says is playing
 (SMTC through PyWinRT on Windows — optional packages, absent means the feature is simply empty; MPRIS through
-`playerctl` on Linux) and caches the album art. `templates.py` builds ready-made pages for the New page window.
+`playerctl` on Linux) and caches the album art. `system/teams.py` reads Teams' in-call mic button through UI
+Automation (ctypes, vtable slots checked against Wine's IDL; the contract is from shuush) on its own thread, and
+does the explicit mute on/off there too: read, press only if needed, read again to confirm. `templates.py` builds ready-made pages for the New page window.
 `controller.py` is the hub. It owns pages, presses, rules (edge-triggered: they act only when the result changes),
 variables, debounced saving and undo snapshots (device settings are kept out of undo).
 `actions.py` runs key actions on a worker thread; actions that touch the app (page, variable, message, brightness,

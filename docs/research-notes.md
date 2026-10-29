@@ -95,7 +95,21 @@ The SD card's `config.json` turned out to be a pointer, not a theme: themes sit 
 - **Running our own code on the MK10.** The only route found is replacing `/data/KeyboardDevice` with a launcher.
   That risks bricking the device until a recovery path is confirmed (FEL button or pads, or a UART header).
 
-## Microsoft Teams: what a desk device can and can't get (investigated October 2026, nothing built)
+## Microsoft Teams: what a desk device can and can't get (investigated October 2026)
+
+**Built since (October 2026): in-call and mute state through UI Automation**, in `manager/mk10manager/system/teams.py`,
+following [shuush](https://github.com/supermem613/shuush) (MIT, C#, started June 2026):
+- AutomationId `microphone-button` exists in a Teams window only during a call. Its name is `Mute mic` (live) or
+  `Unmute mic` (muted). Re-find it on every read, because WebView2 replaces its accessibility nodes on redraw
+  and a kept node silently returns the old name.
+- Pressing it with the Invoke pattern toggles mute with no focus and no hotkey. Explicit mute on/off is that
+  press, done only after a read says it's needed and confirmed by reading again.
+- shuush's history (17 June to 19 October 2026, about 25 commits) shows **no change to that contract**. Its
+  Teams fixes were all about *when* to look: meetings that don't update Windows' microphone-in-use record,
+  holding the state across a redraw that hides the button for one poll, and idle CPU. Four months is a short
+  record. MuteDeck's changelog shows repeated breakage from Teams redesigns, so expect it eventually.
+- The ctypes vtable slots were checked against Wine's `uiautomationclient.idl`. Not yet run on the work PC:
+  `teams-windows.bat` during a call is the first check.
 
 Asked for: which input/output devices Teams is using, the time, how long the meeting has been going,
 how many people are in it, and who is speaking.
@@ -114,7 +128,7 @@ It never offered participant count, who is speaking, or which audio devices Team
 
 | Route | Gives | Costs | Works on |
 |---|---|---|---|
-| UI Automation scraping (what MuteDeck does now) | mute, camera, in-a-call; roster count with effort | breaks on Teams UI changes, language-dependent | Windows |
+| UI Automation scraping (what MuteDeck does now) — **built, see below** | mute, camera, in-a-call; roster count with effort | breaks on Teams UI changes, language-dependent | Windows |
 | `teams-for-linux` (Electron wrapper) MQTT / D-Bus | a status object (mic, camera), plus toggle-mute / toggle-video / raise-hand commands | you run their wrapper instead of the PWA; their own issue tracker shows mute detection breaking against current Teams | Linux |
 | Graph `/me/presence` | availability and activity (`InAMeeting`, `InACall`, `Presenting`) | Entra app registration; delegated `Presence.Read`, or `Presence.Read.All` for change notifications (1-hour subscriptions, renewed by PATCH); no personal accounts; a work tenant will probably want admin consent | anywhere |
 | Graph Communications calling bot | live roster **and** active speaker | an Azure-hosted bot with application permissions and admin consent, which **joins the meeting as a visible participant** | anywhere, but socially unacceptable at a desk |
