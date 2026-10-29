@@ -8,7 +8,10 @@ to be scraped out of the apps.
 Status (October 2026):
 - **Round 1 on a real MK10 did not come up.** The product name stayed `Serial`. Cause: a bug in
   `usbconfig.sh`, explained under [Round 1](#round-1-configfs-wasnt-mounted).
-- **Round 2 is ready:** the bug is fixed, and every stage now leaves a breadcrumb the PC can read.
+- **Round 2 got further and hit a hardware-driver limit.** The serial number came back `mk10hid-serial-only`:
+  HID would not bind, with or without the sound card. The USB controller has only **one interrupt endpoint and
+  one isochronous endpoint**, and the serial port already holds the interrupt one. See
+  [Round 2](#round-2-one-interrupt-endpoint). The test as built cannot work on the stock kernel.
 
 ## Why the MK10 can do this without new firmware
 
@@ -118,6 +121,43 @@ The first run on a real MK10 came up as plain `Serial`. The card image explains 
 Now `usbconfig.sh` mounts configfs itself, as Waveshare's script does. The other stages may or may not have
 worked in round 1; round 1 left no way to tell, which is why the breadcrumbs exist now.
 
+### Round 2: one interrupt endpoint
+
+Result: product `MK10 call-control test FAILED`, serial number `mk10hid-serial-only`. Everything up to binding
+worked: `lunch.sh` armed, `KeyboardDevice` called the stand-in, configfs mounted. Then neither
+serial + HID + sound card nor serial + HID would bind, and only the serial port did.
+
+Allwinner's UDC driver has a static endpoint table. These are the capability bits read out of the kernel image
+(`boot.fex`, `Linux version 5.4.61 #229 Wed Oct 15 2025`, the `struct usb_ep` array in `.data`):
+
+| Endpoint | Type | Direction | maxpacket |
+|---|---|---|---|
+| ep1in, ep2in, ep5in | bulk | in | 512 |
+| ep1out, ep2out, ep5out | bulk | out | 512 |
+| ep3 | **iso** (the only one) | either | 1024 |
+| ep4 | **interrupt** (the only one) | either | 512 |
+
+What each function needs, and why that fails:
+- **ACM** (the serial port) needs bulk in, bulk out and **interrupt in** for its notifications. It takes ep4.
+- **The kernel's HID function** (5.4) needs **interrupt in and interrupt out**. Two interrupt endpoints, on a
+  controller that has one, so it can't bind even alone. (Making the OUT endpoint optional came in a later
+  kernel.)
+- **UAC1** with speaker and mic needs **two** iso endpoints, and there is one. That is why Waveshare's
+  `setusbconfig uac1` sets `p_chmask=0`: speaker only.
+- Gadget endpoint matching goes by these capability bits, so a bulk endpoint is never offered for interrupt
+  or iso.
+
+The `struct usb_ep` layout read out of the table matches mainline 5.4 exactly. That matters for the module
+route below.
+
+Ways forward, none built yet:
+
+| Route | What it keeps | Cost | Difficulty | Confidence |
+|---|---|---|---|---|
+| **Kernel module** that adds interrupt (and maybe iso) to some bulk endpoints' capability bits before the gadget binds, loaded only on an armed boot | everything: COM port, the kernel's HID, speaker; mic if iso works on a bulk endpoint | build against 5.4 sources with the MK10's `.config`; a mistake oopses that one boot | 4/5 | HID binds ~55%; mic ~35% |
+| **No kernel change:** serial over bulk only (`gser`, or a FunctionFS link with MS OS descriptors so Windows installs WinUSB itself) + HID written on FunctionFS with only an interrupt-in endpoint (lights arrive as SET_REPORT, which FunctionFS hands to userspace) | HID, speaker | MK10 Manager, the probe and the OpenDeck plugin move from a COM port to libusb; no mic (one iso endpoint) | 4/5 | ~60% |
+| **Host-side instead:** Teams' local third-party app API through the Manager; a virtual HID device (uhid) on Linux for Meet in Chrome | nothing on the device | no headset; different per app | 2–3/5 | per app |
+
 ## Running it
 
 ```
@@ -184,3 +224,48 @@ Bluetooth headset.
   - **Difficulty 3/5 on top of this test, ~55–65%.**
   - Plugging the same dongle straight into the PC already gives a working (often certified) headset. The MK10
     in the middle is only worth it for the screen and keys showing the real call state of that headset.
+
+## Call control without the MK10 being the headset (researched October 2026)
+
+The MK10-as-audio-device idea is on the back burner. This is what HID telephony call control offers without it.
+
+### How the apps decide which device to listen to
+
+| App | Which HID device it uses | Evidence |
+|---|---|---|
+| Teams desktop (Windows) | **the one you picked as speaker and mic** | Q-SYS: its HID controls "will not function" unless its speakerphone is selected as both input and output; community reports of buttons only working once the headset is re-selected; one claim that Teams only answers certified models (unverified) |
+| Zoom desktop | the selected audio device, as Teams | Q-SYS, same page; Zoom also only accepts/declines incoming calls by HID, it can't hang up a live one |
+| Teams web / PWA (so Teams on Linux) | **none**: it never opened a telephony headset over WebHID, even mid-call | `teams-for-linux` issue 3151 (one EPOS DECT base, Chrome and Vivaldi) |
+| Google Meet (Chrome, Edge) | **the one you connect** in Meet's settings (Audio → Call control → Connect device), through WebHID | Google's help page; it recommends Meet-certified devices and warns others "might not work as expected" |
+
+So a HID box that isn't also the sound card is ignored by Teams and Zoom desktop (confidence ~80%). It is ignored by
+Teams on Linux too, but only because Teams there ignores all HID telephony. Meet is the exception.
+
+The USB-IF has defined usages for exactly the "separate call-control box" case:
+- **HUTRR106, Call State Management Control:** Generic Desktop collection 0x13, Call Active LED 0xE0, Call Mute
+  Toggle 0xE1, Call Mute LED 0xE2.
+- **HUTRR110, System Microphone Mute:** Generic Desktop 0xA9. Linux maps it to `KEY_MICMUTE`.
+
+A developer on Microsoft Q&A (April 2026) reports **Windows 11 does nothing with HUTRR106**: the toggle doesn't
+mute Teams and no LED report comes back. So that's a dead end for now.
+
+### What we can do
+
+| Route | Gives the MK10 | Needs | Difficulty | Confidence |
+|---|---|---|---|---|
+| **Win+Alt+K** from an MK10 key | Teams' own mute toggle, from anywhere: Windows 11's call-mute shortcut behind the taskbar mic button | nothing; it's a keystroke | 1/5 | ~80% for Teams; other apps only if they adopted Windows' call mute; no way found to *read* the state back |
+| **Listen to your real headset's lights** (USB capture) | in-call, muted, ringing, for every app that drives that headset (Teams, Zoom, Webex) | a USB HID headset you already use; Windows: USBPcap (signed driver, admin to install and admin for each capture, so an elevated helper); Linux: `usbmon` (root or a udev rule) | 3/5 | ~65%; read-only, it can't press the headset's buttons |
+| **Virtual HID headset on Linux** (`/dev/uhid`) for Meet | Meet's lights (in call, mute, ring) and buttons both ways | a udev rule for `/dev/uhid`; Chrome or Edge | 2/5 | ~50%: Meet may not accept an uncertified device |
+| **The MK10 itself as a HID device** | as above, but it's the MK10 | the kernel module or the move off the COM port (round 2), and for Teams/Zoom it would still have to be the sound card | 4/5 | Meet only, ~40% |
+| **Windows virtual HID** | as the Linux one | a signed kernel driver. `usbip-win2` upstream is test-signed only; the Alia5 fork says its drivers are Microsoft-signed; either way an admin install of a USB/IP stack | 4–5/5 | low on a work PC |
+
+`probe hid-list` (read-only, needs `hidapi`) lists this PC's HID devices, with call-control ones first. It answers
+the first question for the capture route: does the headset in use have a Telephony collection at all?
+
+Sources: [Q-SYS HID Conferencing](https://help.qsys.com/content/Schematic_Library/usb_telephony.htm),
+[teams-for-linux #3151](https://github.com/IsmaelMartinez/teams-for-linux/issues/3151),
+[Google Meet call controls](https://support.google.com/meet/answer/12562325),
+[HUTRR106](https://www.usb.org/sites/default/files/hutrr106-callstatemanagementcontrol_0.pdf),
+[Microsoft Q&A on HUTRR106/110](https://learn.microsoft.com/en-us/answers/questions/5860057/windows-support-for-usb-hid-hutrr110-(system-micro),
+[Linux HUTRR110 mapping](https://lkml.iu.edu/hypermail/linux/kernel/2212.1/05123.html),
+[usbip-win2](https://github.com/nefarius/usbip-win2), [Alia5 fork](https://github.com/Alia5/usbip-win2).

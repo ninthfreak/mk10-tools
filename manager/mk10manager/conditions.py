@@ -14,6 +14,7 @@ from .schema import Field
 from .system.audio import INPUT, OUTPUT, AudioState
 from .system.nowplaying import Track
 from .system.slack import SlackState
+from .system.teams import TeamsState
 
 CONDITIONS = [
     ("app", "App is"),
@@ -27,10 +28,13 @@ CONDITIONS = [
     ("slack_presence", "Slack shows me as"),
     ("slack_unread", "Slack unread"),
     ("playing", "Music or video is"),
+    ("teams_call", "Teams call"),
+    ("teams_muted", "Teams microphone is"),
 ]
 
 AUDIO_CONDITIONS = ("output_muted", "input_muted")
 SLACK_CONDITIONS = ("slack_huddle", "slack_dnd", "slack_presence", "slack_unread")
+TEAMS_CONDITIONS = ("teams_call", "teams_muted")
 MUTE_CHOICES = [("yes", "muted"), ("no", "not muted")]
 
 #: Conditions whose value is picked from a short list. The editor builds one combo box from this.
@@ -42,6 +46,8 @@ CHOICE_CONDITIONS = {
     "slack_presence": [("away", "away"), ("active", "active")],
     "slack_unread": [("yes", "something unread"), ("no", "all caught up")],
     "playing": [("yes", "playing"), ("no", "not playing")],
+    "teams_call": [("yes", "I'm in one"), ("no", "I'm not in one")],
+    "teams_muted": [("yes", "muted"), ("no", "live")],
 }
 CONDITION_DEFAULTS = {"when": "app", "value": "", "name": "mode", "from": "09:00", "to": "17:00"}
 
@@ -80,7 +86,8 @@ def wants_muted(value) -> bool:
 
 def matches(cond: dict, app: str = "", title: str = "", variables: dict | None = None,
             now: datetime | None = None, audio: AudioState | None = None,
-            slack: SlackState | None = None, track: Track | None = None) -> bool:
+            slack: SlackState | None = None, track: Track | None = None,
+            teams: TeamsState | None = None) -> bool:
     """Is this condition true right now? Unknown kinds, and sound we can't read, are never true."""
     if not cond.get("enabled", True):
         return False
@@ -118,13 +125,20 @@ def matches(cond: dict, app: str = "", title: str = "", variables: dict | None =
         if track is None or not track.available:
             return False
         return track.playing == wants_muted(cond.get("value"))
+    if when in TEAMS_CONDITIONS:
+        if teams is None or not teams.available:
+            return False
+        if when == "teams_call":
+            return teams.in_call == wants_muted(cond.get("value"))
+        # Muted or live only means something during a call, and only when Teams' button said which.
+        return teams.in_call and teams.muted is not None and teams.muted == wants_muted(cond.get("value"))
     return False
 
 
 def matches_in(cond: dict, ctx) -> bool:
     """Same, for anything that carries a RenderContext (keys while they're being drawn)."""
     return matches(cond, ctx.app, ctx.title, ctx.variables, ctx.now, getattr(ctx, "audio", None),
-                   getattr(ctx, "slack", None), getattr(ctx, "now_playing", None))
+                   getattr(ctx, "slack", None), getattr(ctx, "now_playing", None), getattr(ctx, "teams", None))
 
 
 def describe(cond: dict) -> str:
@@ -148,6 +162,10 @@ def describe(cond: dict) -> str:
         return "%s %s" % (lead, words)
     if when == "playing":
         return "something is %s" % dict(CHOICE_CONDITIONS["playing"]).get(cond.get("value") or "yes", "playing")
+    if when == "teams_call":
+        return "a Teams call: %s" % dict(CHOICE_CONDITIONS["teams_call"]).get(cond.get("value") or "yes", "?")
+    if when == "teams_muted":
+        return "Teams has me %s" % dict(CHOICE_CONDITIONS["teams_muted"]).get(cond.get("value") or "yes", "?")
     return "?"
 
 
@@ -173,7 +191,7 @@ def new_state(when: str = "output_muted") -> dict:
     s["enabled"] = True
     for f in STATE_LOOK_FIELDS:
         s[f.key] = f.default
-    if when == "input_muted":
+    if when in ("input_muted", "teams_muted"):
         s["icon"] = "microphone-off"
     return s
 

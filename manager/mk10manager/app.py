@@ -23,7 +23,8 @@ USAGE = """examples:
   launch.pyw set mode=meeting     set a variable in the running app
   launch.pyw page Browser         switch the running app to a page
   launch.pyw message "Build done" 3   show a message on the small screen for 3 seconds
-  launch.pyw nowplaying           print what this PC says is playing, and exit (a check, not a command)"""
+  launch.pyw nowplaying           print what this PC says is playing, and exit (a check, not a command)
+  launch.pyw teams                print what Teams shows (call, mute, its buttons), and exit; presses nothing"""
 
 
 def server_name() -> str:
@@ -38,7 +39,7 @@ def parse_args(argv):
     p = argparse.ArgumentParser(prog="mk10-manager", description=APP_NAME, epilog=USAGE,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--minimized", action="store_true", help="start hidden in the tray")
-    p.add_argument("command", nargs="?", choices=["show", "set", "page", "message", "nowplaying"],
+    p.add_argument("command", nargs="?", choices=["show", "set", "page", "message", "nowplaying", "teams"],
                    help=argparse.SUPPRESS)
     p.add_argument("args", nargs="*", help=argparse.SUPPRESS)
     return p.parse_args(argv)
@@ -118,8 +119,17 @@ class CommandServer:
 def run_nowplaying_report() -> int:
     """Print what this PC says is playing — and always save it, because a .pyw start has no console."""
     from .system.nowplaying import report
-    text = report()
-    path = config_dir() / "nowplaying-report.txt"
+    return _print_report(report(), "nowplaying-report.txt")
+
+
+def run_teams_report() -> int:
+    """Print what Teams exposes to UI Automation, and save it. Read-only: nothing is pressed."""
+    from .system.teams import report
+    return _print_report(report(), "teams-report.txt")
+
+
+def _print_report(text: str, filename: str) -> int:
+    path = config_dir() / filename
     try:
         config_dir().mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
@@ -177,6 +187,8 @@ def main(argv=None):
     ns = parse_args(sys.argv[1:] if argv is None else argv)
     if ns.command == "nowplaying":
         return run_nowplaying_report()      # a local check; it needs no window and no running copy
+    if ns.command == "teams":
+        return run_teams_report()
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_NAME)

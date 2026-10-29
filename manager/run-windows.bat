@@ -13,7 +13,10 @@ if not exist ".venv\installed.ok" (
   echo ok> ".venv\installed.ok"
 )
 rem A command that prints a report needs the Python that has a console.
-if /i "%~1"=="nowplaying" (
+set REPORT=
+if /i "%~1"=="nowplaying" set REPORT=1
+if /i "%~1"=="teams" set REPORT=1
+if defined REPORT (
   ".venv\Scripts\python.exe" launch.pyw %*
   echo.
   pause

@@ -350,3 +350,17 @@ def test_probe_explains_the_breadcrumb(monkeypatch, capsys, serial, expect):
     monkeypatch.setattr(mk10probe, "usb_identity", lambda: [("Serial", serial)])
     mk10probe._hid_explain_absent()
     assert expect in capsys.readouterr().out
+
+
+def test_hid_list_puts_call_control_devices_first():
+    entries = [
+        {"vendor_id": 0x046D, "product_id": 0xC52B, "product_string": "USB Receiver", "usage_page": 1, "usage": 2},
+        {"vendor_id": 0x0B0E, "product_id": 0x245E, "product_string": "Jabra Link 380", "usage_page": 0x0C, "usage": 1},
+        {"vendor_id": 0x0B0E, "product_id": 0x245E, "product_string": "Jabra Link 380", "usage_page": 0x0B, "usage": 5},
+        {"vendor_id": 0x0B0E, "product_id": 0x245E, "product_string": "Jabra Link 380", "usage_page": 0x0B, "usage": 5},
+    ]
+    rows = mk10probe.hid_device_table(entries)
+    assert rows[0][3] == "Jabra Link 380"
+    assert ("Telephony / Headset", "call") in rows[0][4] and len(rows[0][4]) == 2
+    assert rows[1][4] == [("Generic Desktop / Mouse", None)]
+    assert mk10probe.describe_collection(0x01, 0x13)[1] == "call"

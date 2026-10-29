@@ -38,8 +38,8 @@ If it won't start and mentions "xcb", install `libxcb-cursor0` (Debian, Ubuntu) 
   **Right-click** a key to copy, paste, clear or test it.
 - **Pages** are at the top. Each page has its own keys and its own small screen.
   Right-click a page to rename, duplicate, delete it, or make it the default.
-- **New page** offers ready-made templates as well as a blank one: a Sound and microphone page, and a Slack
-  page. You see exactly what you'd get before you add it, and a template can offer to add its own context
+- **New page** offers ready-made templates as well as a blank one: a Sound and microphone page, a Slack
+  page and a Microsoft Teams page. You see exactly what you'd get before you add it, and a template can offer to add its own context
   rule (the Slack one can switch to itself whenever you're in a huddle).
 - **Context rules** (bottom left) switch pages for you.
   For example: when firefox is active, show the Browser page. Rules higher in the list win.
@@ -58,7 +58,8 @@ If it won't start and mentions "xcb", install `libxcb-cursor0` (Debian, Ubuntu) 
 ### Things a key can do
 
 Keyboard shortcut, type text, media keys, mute or change the volume of the speakers or the microphone,
-Slack (status, away, snooze, post a message, jump to a channel), open a website or file, run a command,
+Slack (status, away, snooze, post a message, jump to a channel), Microsoft Teams (mute me, unmute me, switch
+mute), open a website or file, run a command,
 send a web request (Home Assistant and similar), change page, set a variable, show a message on the small
 screen, change brightness, wait.
 
@@ -77,7 +78,31 @@ For Slack: `{slack_huddle}` `{slack_dnd}` `{slack_unread}` `{slack_mentions}` `{
 
 For what's playing: `{track}` `{artist}` `{album}` `{player}` `{track_time}` `{track_length}`.
 
+For Teams: `{teams_call}` ("in a call", or nothing), `{teams_mic}` ("muted" or "live" during a call), and
+`{teams_mic:Muted|Live}` for your own two words.
+
 A Text face can also run a command every few seconds and show its output with `{output}`.
+
+## Microsoft Teams
+
+Keys can show whether you're in a Teams call and whether **Teams** has you muted, and can mute or unmute you
+**explicitly**: *Mute me* only presses Teams' mic button if you're live, *Unmute me* only if you're muted, and
+both read Teams again afterwards to check it changed. Outside a call, or when the state can't be read, they do
+nothing rather than guess. The **Microsoft Teams** template on New page sets all of this up.
+
+How: Microsoft retired Teams' local API for hardware in 2026, so this reads the Teams window the way a screen
+reader does (Windows UI Automation): the in-call mic button and its name, "Mute mic" or "Unmute mic". It presses
+that same button, so Teams doesn't need focus and no shortcut is sent. The approach comes from
+[shuush](https://github.com/supermem613/shuush) (MIT), which worked out that contract against the new Teams.
+
+- **Windows only.** Teams on Linux runs in a browser; that isn't read yet.
+- **English Teams only**, for now: the state comes from the button's name. In another language the keys show
+  "in a call" but not muted or live, and *Mute me* / *Unmute me* refuse to press.
+- If a Teams update renames the button, the keys stop changing. Double-click **`teams-windows.bat`** (or run
+  `run-windows.bat teams`) **during a call**: it lists what Teams exposes — the mic button, its name, and every
+  button in the call window — presses nothing, and saves it to `teams-report.txt` in the settings folder.
+
+The switch is on the **Device and app** tab, with a line saying what the app sees right now.
 
 ## Now playing
 

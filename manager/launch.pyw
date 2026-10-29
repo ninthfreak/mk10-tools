@@ -24,7 +24,7 @@ def _fail(text):
 
 
 # Commands that print a report. They need a real console, so they must not go to pythonw.exe.
-CONSOLE_COMMANDS = {"nowplaying"}
+CONSOLE_COMMANDS = {"nowplaying", "teams"}
 WANTS_CONSOLE = bool(CONSOLE_COMMANDS.intersection(sys.argv[1:]))
 
 
