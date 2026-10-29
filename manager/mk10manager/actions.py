@@ -52,10 +52,11 @@ ACTION_TYPES = {
               [("mic", "Mute or unmute me (Teams in a call, the PC microphone otherwise)"),
                ("mute_on", "Mute me in Teams"), ("mute_off", "Unmute me in Teams"), ("toggle", "Switch Teams mute"),
                ("camera_toggle", "Switch my camera"), ("camera_on", "Turn my camera on"),
-               ("camera_off", "Turn my camera off")],
+               ("camera_off", "Turn my camera off"),
+               ("share_toggle", "Stop sharing, or open Teams' share picker"), ("share_stop", "Stop sharing")],
               help="Presses Teams' own button, but only after reading its state, and then checks Teams changed. "
                    "Outside a call, or when it can't tell, it does nothing (the first one mutes the PC microphone "
-                   "instead)."),
+                   "instead). Starting to share can't be done from here: what to share is picked in Teams."),
     ]),
     "media": ("Media key", [
         Field("key", "Key", "choice", "play_pause", inputs.MEDIA_KEYS),
@@ -123,7 +124,8 @@ def summary(action: dict, page_name=lambda pid: pid) -> str:
     if t == "teams":
         return {"mic": "Mute or unmute me", "mute_on": "Teams: mute me", "mute_off": "Teams: unmute me",
                 "toggle": "Teams: switch mute", "camera_toggle": "Teams: switch my camera",
-                "camera_on": "Teams: camera on", "camera_off": "Teams: camera off"}.get(a["mode"], label)
+                "camera_on": "Teams: camera on", "camera_off": "Teams: camera off",
+                "share_toggle": "Teams: stop sharing or share", "share_stop": "Teams: stop sharing"}.get(a["mode"], label)
     if t == "slack":
         mode = a["mode"]
         if mode == "status":

@@ -124,6 +124,25 @@ following [shuush](https://github.com/supermem613/shuush) (MIT, C#, started June
   hand state isn't in the name; the reader tries the button's ARIA pressed state and Toggle pattern, which the
   next report shows. Sharing adds two windows the reader passes over: a `ScreenBorderWindow` from a
   second Teams process and a `Sharing control bar … | Pinned window`. The mic button was still found in 51 ms.
+- Third report and the first whole-tree dump (hand raised, sharing, camera on):
+  - **Hand:** no pressed state anywhere on `raisehands-button` (only `expanded=true`, meaning unproven). It is in
+    your own video tile: an Image named `Myself video, <you>, Has control of production tools, Muted, video is
+    on, Fill frame, Hand raised position 1, Has context menu`. Its AutomationId (`menur372`) is generated, so the
+    reader searches images and takes the one starting `Myself`. Only while your tile is on screen.
+  - **Call clock:** `Text [call-duration-custom] 'Elapsed time 04:04'` with a child `Text '04:34'`. The child is
+    what's on screen; the name lagged 30 s behind it, which matches the user's "30 s behind". The reader takes
+    the larger, and keeps the earliest start time its readings imply (the clock counts whole seconds).
+  - **Sharing:** the `Sharing control bar` window holds a button `You're sharing your screen` (and its own
+    `share-button`). What it says for a window share isn't known yet; the key shows whatever follows "sharing".
+  - **Camera:** Teams' `LocalCache\Microsoft\MSTeams\cmd_settings.json` has `"Camera"` = a device interface path
+    (`\\?\usb#vid_046d&pid_0825&…#{65e8773d-…}\global`, a Logitech C270) that wasn't among Windows' present
+    cameras. The reader turns the path into an instance id and asks cfgmgr32 for the device's name, present
+    devices only, so a camera that isn't plugged in names nothing rather than the wrong thing.
+  - **Audio devices:** none of this says which microphone or speakers Teams picked, and the user saw the keys
+    name Windows' defaults instead. Windows' audio sessions do: every endpoint lists the processes with a
+    session on it and whether it's active. The Manager takes the endpoints where `ms-teams.exe` (or a process it
+    started, such as WebView2) is streaming. Not yet seen on the work PC: which process the sessions belong
+    to. The report lists them.
 
 Asked for: which input/output devices Teams is using, the time, how long the meeting has been going,
 how many people are in it, and who is speaking.

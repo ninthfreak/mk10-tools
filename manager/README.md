@@ -79,7 +79,8 @@ For Slack: `{slack_huddle}` `{slack_dnd}` `{slack_unread}` `{slack_mentions}` `{
 For what's playing: `{track}` `{artist}` `{album}` `{player}` `{track_time}` `{track_length}`.
 
 For Teams, during a call: `{teams_call}`, `{teams_mic}` (muted / live), `{teams_camera}` (on / off),
-`{teams_sharing}`, `{teams_hand}`, `{teams_meeting}` and `{teams_time}` (how long it has run); any of the
+`{teams_sharing}`, `{teams_hand}`, `{teams_meeting}`, `{teams_time}` (how long it has run), `{teams_shared}`
+(what you're sharing) and `{teams_camera_device:Camera}` (Teams' camera, or your word when it can't tell); any of the
 on/off ones take your own two words, like `{teams_mic:Muted|Live}`. `{in_device:short}` and
 `{out_device:short}` give just the part of a device's name in brackets, e.g. "Jabra Evolve2 65".
 
@@ -88,19 +89,27 @@ A Text face can also run a command every few seconds and show its output with `{
 ## Microsoft Teams
 
 The **Microsoft Teams** template on New page gives one key each for the **microphone**, the **speakers** and the
-**camera**. The microphone and speaker keys name their device, and the small screen shows the whole call: the
-meeting's name, how long it has run, and the microphone, speakers, camera, screen sharing and raised hand. Orange
-is muted (or sharing, or hand up); blue is live or on.
+**camera**, and a **share** key. The first three name their device, and the small screen shows the whole call: the
+meeting's name, how long it has run (Teams' own clock), and the microphone, speakers, camera, what you're
+sharing and raised hand. Orange is muted (or sharing, or hand up); blue is live or on.
 
 - **One microphone key.** In a call it's Teams' own mute; outside a call it mutes the PC microphone.
 - **The PC microphone follows Teams** during a call, and Teams follows the PC: mute in Teams' window and the
   microphone itself mutes; mute with a keyboard's mic key and Teams mutes. When a call starts the PC takes
   Teams' state, because that's what people see. If the two still disagree after a follow, the live side is
   muted, never the muted side unmuted. Switch it off on the **Device and app** tab.
-- **The camera key** turns your Teams camera on and off, in a call only. It can't name the camera yet.
+- **Teams' own devices.** Teams picks its own microphone and speakers, whatever Windows' default is. During a
+  call the keys follow the devices Teams is actually streaming to (read from Windows' audio sessions): their
+  names, mute and levels. Switching to them never unmutes anything. Switch it off on the **Device and app** tab.
+- **The camera key** turns your Teams camera on and off, in a call only. It names the camera saved in Teams'
+  settings while that camera is plugged in. When it isn't, Teams picks another and doesn't say which, so the
+  key just says Camera.
+- **The share key** says what you're sharing ("Sharing your screen", from Teams' sharing bar) and stops it.
+  When you aren't sharing it opens Teams' share picker and brings the call window forward: what to share is
+  chosen there.
 - Every Teams command reads first, presses Teams' own button only if it's needed, and reads again to check it
   changed. Outside a call, or when the state can't be read, it does nothing rather than guess. Single actions
-  are there too for your own keys: mute me, unmute me, camera on, camera off.
+  are there too for your own keys: mute me, unmute me, camera on, camera off, stop sharing.
 
 How: Microsoft retired Teams' local API for hardware in 2026, so this reads the Teams window the way a screen
 reader does (Windows UI Automation): the in-call mic button and its name, "Mute mic" or "Unmute mic". It presses
@@ -112,7 +121,8 @@ that same button, so Teams doesn't need focus and no shortcut is sent. The appro
   "in a call" but not muted or live, and *Mute me* / *Unmute me* refuse to press.
 - If a Teams update renames the buttons, the keys stop changing. Double-click **`teams-windows.bat`** (or run
   `run-windows.bat teams`) **during a call**: it lists what Teams exposes — the call buttons, their names, every
-  button in the call window, and the cameras Windows knows — presses nothing, and saves it to
+  button in the call window, the call clock, your video tile, which programs play and record on which device,
+  Teams' saved devices and the cameras Windows knows — presses nothing, and saves it to
   `teams-report.txt` in the settings folder. It also saves the call window's whole accessibility tree to a
   `teams-tree-<time>.txt` file there. That one holds the names of the people in the meeting.
 

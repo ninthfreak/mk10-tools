@@ -302,6 +302,53 @@ if IS_WIN:
     IID_IMMDeviceEnumerator = GUID("{A95664D2-9614-4F35-A746-DE8DB63617E6}")
     IID_IAudioEndpointVolume = GUID("{5CDF2C82-841E-4546-9722-0CF74078229A}")
     IID_IAudioMeterInformation = GUID("{C02216F6-8C67-4B5B-9D00-D008E73E0064}")
+    IID_IAudioSessionManager2 = GUID("{77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F}")
+    IID_IAudioSessionControl2 = GUID("{BFB7FF88-7239-4FC9-8FA2-07C950BE9C6D}")
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [("dwSize", DWORD), ("cntUsage", DWORD), ("th32ProcessID", DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", DWORD), ("cntThreads", DWORD),
+                    ("th32ParentProcessID", DWORD), ("pcPriClassBase", c_long), ("dwFlags", DWORD),
+                    ("szExeFile", ctypes.c_wchar * 260)]
+
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _kernel32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+    _kernel32.CreateToolhelp32Snapshot.argtypes = (DWORD, DWORD)
+    _kernel32.Process32FirstW.argtypes = (ctypes.c_void_p, POINTER(PROCESSENTRY32W))
+    _kernel32.Process32NextW.argtypes = (ctypes.c_void_p, POINTER(PROCESSENTRY32W))
+    _kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+
+    def process_table() -> dict:
+        """{pid: (parent pid, program name)} for every process running now."""
+        snap = _kernel32.CreateToolhelp32Snapshot(0x2, 0)          # TH32CS_SNAPPROCESS
+        if not snap or snap == ctypes.c_void_p(-1).value:
+            return {}
+        procs = {}
+        try:
+            entry = PROCESSENTRY32W()
+            entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+            ok = _kernel32.Process32FirstW(snap, byref(entry))
+            while ok:
+                procs[entry.th32ProcessID] = (entry.th32ParentProcessID, entry.szExeFile)
+                ok = _kernel32.Process32NextW(snap, byref(entry))
+        finally:
+            _kernel32.CloseHandle(snap)
+        return procs
+
+    def process_family(name_part: str, procs: dict | None = None) -> dict:
+        """{pid: program name} for every process whose program name contains name_part, and every process
+        started by one of them (an app's WebView2 or media helpers play its audio under their own names)."""
+        procs = process_table() if procs is None else procs
+        part = name_part.lower()
+        family = {pid: exe for pid, (_ppid, exe) in procs.items() if part in exe.lower()}
+        grew = True
+        while grew:
+            grew = False
+            for pid, (ppid, exe) in procs.items():
+                if pid not in family and ppid in family and ppid != pid:
+                    family[pid] = exe
+                    grew = True
+        return family
     PKEY_Device_FriendlyName = PROPERTYKEY(GUID("{A45C254E-DF1C-4EFD-8020-67D146A850E0}"), 14)
     EDATAFLOW = {OUTPUT: 0, INPUT: 1}          # eRender, eCapture
     EROLE_CONSOLE = 0
@@ -339,6 +386,17 @@ VOL_GET_SCALAR = 9              # IAudioEndpointVolume::GetMasterVolumeLevelScal
 VOL_SET_MUTE = 14               # IAudioEndpointVolume::SetMute
 VOL_GET_MUTE = 15               # IAudioEndpointVolume::GetMute
 METER_GET_PEAK = 3              # IAudioMeterInformation::GetPeakValue
+ENUM_ENDPOINTS = 3              # IMMDeviceEnumerator::EnumAudioEndpoints
+ENUM_GET_DEVICE = 5             # IMMDeviceEnumerator::GetDevice
+COLL_COUNT, COLL_ITEM = 3, 4    # IMMDeviceCollection::GetCount, ::Item
+DEV_GET_ID = 5                  # IMMDevice::GetId
+SESSIONS_ENUMERATOR = 5         # IAudioSessionManager2::GetSessionEnumerator
+SESSIONS_COUNT, SESSIONS_GET = 3, 4   # IAudioSessionEnumerator::GetCount, ::GetSession
+SESSION_STATE = 3               # IAudioSessionControl::GetState
+SESSION_PROCESS_ID = 14         # IAudioSessionControl2::GetProcessId
+QUERY_INTERFACE = 0             # IUnknown::QueryInterface
+DEVICE_STATE_ACTIVE = 1
+SESSION_ACTIVE = 1              # AudioSessionStateActive
 
 
 class WindowsAudio(_VolumeMath):
@@ -350,6 +408,7 @@ class WindowsAudio(_VolumeMath):
         self._local = threading.local()          # COM is per-thread: read() and apply() run on different ones
         self._names: dict[str, str] = {}
         self._names_next = 0.0
+        self.device_ids = {OUTPUT: None, INPUT: None}      # None: the system default for that side
         self.note = ""
 
     # ---- plumbing
@@ -372,7 +431,19 @@ class WindowsAudio(_VolumeMath):
             return None
         return Interface(ptr)
 
+    def set_device_ids(self, ids: dict):
+        """Use these endpoints (Core Audio ids) instead of the defaults; None for a side means its default."""
+        new = {OUTPUT: ids.get(OUTPUT), INPUT: ids.get(INPUT)}
+        if new != self.device_ids:
+            self.device_ids = new
+            self._names_next = 0.0              # the names change with the devices: read them again now
+
     def _default_device(self, enum: Interface, target: str) -> Interface | None:
+        wanted = self.device_ids.get(target)
+        if wanted:
+            ptr = c_void_p()
+            if enum.call(ENUM_GET_DEVICE, (LPCWSTR, wanted), (POINTER(c_void_p), byref(ptr))) >= 0 and ptr:
+                return Interface(ptr)
         ptr = c_void_p()
         hr = enum.call(ENUM_GET_DEFAULT, (c_int, EDATAFLOW[target]), (c_int, EROLE_CONSOLE),
                        (POINTER(c_void_p), byref(ptr)))
@@ -419,6 +490,154 @@ class WindowsAudio(_VolumeMath):
         finally:
             _ole32.PropVariantClear(byref(pv))      # the name is a COM-allocated string
             store.release()
+
+    # ---- which devices an app is using
+    @staticmethod
+    def _device_id(device: Interface):
+        p = c_void_p()
+        if device.call(DEV_GET_ID, (POINTER(c_void_p), byref(p))) < 0 or not p:
+            return None
+        try:
+            return ctypes.wstring_at(p.value)
+        finally:
+            _ole32.CoTaskMemFree(p)
+
+    def _sessions(self, device: Interface) -> list:
+        """[(pid, state)] of the audio sessions open on this endpoint."""
+        manager = self._activate(device, IID_IAudioSessionManager2)
+        if manager is None:
+            return []
+        out = []
+        try:
+            ptr = c_void_p()
+            if manager.call(SESSIONS_ENUMERATOR, (POINTER(c_void_p), byref(ptr))) < 0 or not ptr:
+                return []
+            sessions = Interface(ptr)
+            try:
+                count = c_int(0)
+                if sessions.call(SESSIONS_COUNT, (POINTER(c_int), byref(count))) < 0:
+                    return []
+                for i in range(count.value):
+                    ctl = c_void_p()
+                    if sessions.call(SESSIONS_GET, (c_int, i), (POINTER(c_void_p), byref(ctl))) < 0 or not ctl:
+                        continue
+                    control = Interface(ctl)
+                    try:
+                        state = c_int(0)
+                        control.call(SESSION_STATE, (POINTER(c_int), byref(state)))
+                        pid = 0
+                        ptr2 = c_void_p()
+                        if control.call(QUERY_INTERFACE, (POINTER(GUID), byref(IID_IAudioSessionControl2)),
+                                        (POINTER(c_void_p), byref(ptr2))) >= 0 and ptr2:
+                            control2 = Interface(ptr2)
+                            try:
+                                p = DWORD(0)
+                                if control2.call(SESSION_PROCESS_ID, (POINTER(DWORD), byref(p))) >= 0:
+                                    pid = p.value
+                            finally:
+                                control2.release()
+                        out.append((pid, state.value))
+                    finally:
+                        control.release()
+            finally:
+                sessions.release()
+        finally:
+            manager.release()
+        return out
+
+    def _endpoints(self, enum: Interface, target: str) -> list:
+        """[(device, name)] of the active endpoints on one side. The caller releases each device."""
+        ptr = c_void_p()
+        if enum.call(ENUM_ENDPOINTS, (c_int, EDATAFLOW[target]), (DWORD, DEVICE_STATE_ACTIVE),
+                     (POINTER(c_void_p), byref(ptr))) < 0 or not ptr:
+            return []
+        collection = Interface(ptr)
+        out = []
+        try:
+            count = c_int(0)
+            if collection.call(COLL_COUNT, (POINTER(c_int), byref(count))) < 0:
+                return []
+            for i in range(count.value):
+                dev = c_void_p()
+                if collection.call(COLL_ITEM, (c_int, i), (POINTER(c_void_p), byref(dev))) >= 0 and dev:
+                    device = Interface(dev)
+                    out.append((device, self._friendly_name(device)))
+        finally:
+            collection.release()
+        return out
+
+    def app_sessions(self, name_part: str) -> dict:
+        """{OUTPUT: [(endpoint id, name, active)], INPUT: [...]}: every endpoint where an app whose program name
+        contains name_part (or a process it started) has an audio session, and whether it's streaming now."""
+        found = {OUTPUT: [], INPUT: []}
+        if not self._com_ready():
+            return found
+        family = process_family(name_part)
+        if not family:
+            return found
+        enum = self._enumerator()
+        if enum is None:
+            return found
+        try:
+            for target in (OUTPUT, INPUT):
+                for device, name in self._endpoints(enum, target):
+                    try:
+                        states = [state for pid, state in self._sessions(device) if pid in family]
+                        if states:
+                            found[target].append((self._device_id(device), name, SESSION_ACTIVE in states))
+                    finally:
+                        device.release()
+        finally:
+            enum.release()
+        return found
+
+    def sessions_report(self, name_part: str) -> list[str]:
+        """Every app with an audio session on every active endpoint: what following an app relies on."""
+        if not self._com_ready():
+            return ["Audio sessions: %s" % (self.note or "COM isn't available")]
+        procs = process_table()
+        family = process_family(name_part, procs)
+        enum = self._enumerator()
+        if enum is None:
+            return ["Audio sessions: %s" % self.note]
+        lines = ["Audio sessions (which program plays or records where; * = %s or started by it):" % name_part]
+        try:
+            for target, label in ((OUTPUT, "Speakers"), (INPUT, "Microphone")):
+                default = self._default_device(enum, target) if not self.device_ids.get(target) else None
+                default_id = self._device_id(default) if default is not None else None
+                if default is not None:
+                    default.release()
+                for device, name in self._endpoints(enum, target):
+                    try:
+                        dev_id = self._device_id(device)
+                        lines.append("  %s: %s%s" % (label, name or "?", "  (Windows' default)"
+                                                     if dev_id and dev_id == default_id else ""))
+                        sessions = self._sessions(device)
+                        for pid, state in sessions:
+                            exe = procs.get(pid, (0, "system sounds" if pid == 0 else "?"))[1]
+                            lines.append("    %s %s (pid %d) %s" % ("*" if pid in family else " ", exe, pid,
+                                                                    {0: "inactive", 1: "ACTIVE", 2: "expired"}
+                                                                    .get(state, "state %d" % state)))
+                        if not sessions:
+                            lines.append("      no sessions")
+                    finally:
+                        device.release()
+        finally:
+            enum.release()
+        found = self.app_devices(name_part)
+        names = {OUTPUT: "", INPUT: ""}
+        for side, entries in self.app_sessions(name_part).items():
+            names[side] = next((n for dev_id, n, _active in entries if dev_id == found[side]), "")
+        lines.append("Following %s would use: speakers %s, microphone %s" % (
+            name_part, names[OUTPUT] or "(not streaming: the last one found, else the default)",
+            names[INPUT] or "(not streaming: the last one found, else the default)"))
+        return lines
+
+    def app_devices(self, name_part: str) -> dict:
+        """{OUTPUT: id, INPUT: id}: where that app is streaming right now. None for a side where it isn't."""
+        sessions = self.app_sessions(name_part)
+        return {side: next((dev_id for dev_id, _name, active in sessions[side] if active and dev_id), None)
+                for side in (OUTPUT, INPUT)}
 
     def read(self, want_levels=frozenset()) -> AudioState:
         if not self._com_ready():
@@ -536,6 +755,10 @@ class AudioMonitor(QObject):
         self._levels_on = True
         self._held = {OUTPUT: 0.0, INPUT: 0.0}
         self._held_at = 0.0
+        self._follow: str | None = None      # an app whose devices stand in for the defaults (see follow_app)
+        self._followed = {OUTPUT: None, INPUT: None}
+        self._follow_next = 0.0
+        self._follow_started = 0.0
         self._stop = threading.Event()
         self._poke = threading.Event()
         self._thread: threading.Thread | None = None
@@ -579,6 +802,28 @@ class AudioMonitor(QObject):
         """Read again right away: used straight after a key muted something."""
         self._poke.set()
 
+    def follow_app(self, name_part: str | None):
+        """While set, 'the speakers' and 'the microphone' are the devices this app is streaming to (Teams picks
+        its own, whatever the system default is), wherever it's streaming. None goes back to the defaults."""
+        if name_part != self._follow:
+            self._follow = name_part
+            self._follow_next = 0.0
+            self._follow_started = time.monotonic()
+            self._poke.set()
+
+    @property
+    def following(self) -> bool:
+        return bool(self._follow and any(self._followed.values()))
+
+    FOLLOW_SETTLE = 5.0
+
+    @property
+    def follow_settling(self) -> bool:
+        """Following has just been asked for and hasn't found the app's microphone yet: until it does (or a few
+        seconds pass), 'the microphone' may be about to change, so nothing should act on it."""
+        return bool(self._follow) and hasattr(self.backend, "set_device_ids") and not self._followed.get(INPUT) \
+            and time.monotonic() - self._follow_started < self.FOLLOW_SETTLE
+
     def apply(self, target: str, mode: str, value: int = 0):
         """Called from the action worker thread."""
         try:
@@ -589,9 +834,35 @@ class AudioMonitor(QObject):
         return ok, msg
 
     # ---- background thread
+    FOLLOW_SECONDS = 2.0
+
+    def _update_followed(self):
+        """Look again at where the followed app is streaming. A side where it has stopped for a moment (Teams
+        while you're muted, say) keeps the device it last used, until following stops."""
+        set_ids = getattr(self.backend, "set_device_ids", None)
+        if set_ids is None:
+            return
+        if not self._follow:
+            if any(self._followed.values()):
+                self._followed = {OUTPUT: None, INPUT: None}
+                set_ids({})
+            return
+        if time.monotonic() < self._follow_next:
+            return
+        self._follow_next = time.monotonic() + self.FOLLOW_SECONDS
+        try:
+            now = self.backend.app_devices(self._follow)
+        except Exception:
+            return
+        merged = {side: now.get(side) or self._followed.get(side) for side in (OUTPUT, INPUT)}
+        if merged != self._followed:
+            self._followed = merged
+            set_ids(merged)
+
     def _run(self):
         while not self._stop.is_set():
             want = self._want
+            self._update_followed()
             try:
                 state = self.backend.read(want)
             except Exception as e:

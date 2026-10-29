@@ -588,7 +588,7 @@ class TeamsFace(SlackFace):
         Field("text_size", "Text size", "int", 26, minimum=10, maximum=60),
         Field("accent", "Highlight colour", "color", BLUE),
         Field("busy_color", "Colour when muted, sharing or hand up", "color", ORANGE),
-        Field("show_devices", "Name the microphone and speakers", "bool", False,
+        Field("show_devices", "Name the microphone, speakers and camera", "bool", False,
               help="The keys on the Teams page already name them."),
         Field("row_px", "Row text size", "int", 21, minimum=12, maximum=30),
     ]
@@ -641,9 +641,13 @@ class TeamsFace(SlackFace):
             rows.append(("OUT", words or "On", busy if out.muted else accent, bool(out.muted)))
         if in_call:
             if teams.camera is not None:
-                rows.append(("CAMERA", "On" if teams.camera else "Off", accent if teams.camera else GREY, False))
+                words = "On" if teams.camera else "Off"
+                if v["show_devices"] and teams.camera_device:
+                    words += " · " + teams.camera_device
+                rows.append(("CAMERA", words, accent if teams.camera else GREY, False))
             if teams.sharing is not None:
-                rows.append(("SHARING", "Yes" if teams.sharing else "No", busy if teams.sharing else GREY,
+                what = (teams.shared[:1].upper() + teams.shared[1:]) if teams.shared else "Yes"
+                rows.append(("SHARING", what if teams.sharing else "No", busy if teams.sharing else GREY,
                              bool(teams.sharing)))
             if teams.hand is not None:
                 rows.append(("HAND", "Raised" if teams.hand else "Down", busy if teams.hand else GREY,

@@ -19,10 +19,15 @@ class FakeTeams:
         self.camera = False
         self.sharing = False
         self.hand = None            # what the hand button's pressed state says (None: it doesn't say)
+        self.shared = "your screen" # what the sharing bar says, while sharing
+        self.elapsed = None         # seconds on Teams' call clock when the call was joined (None: no clock)
+        self.joined_at = 0.0
+        self.camera_device = ""
         self.name = None            # set to make the mic button say something else (another language)
         self.press_works = True     # False: Teams ignores presses
         self.misses = 0             # how many reads in a row lose the buttons, as a WebView2 redraw does
         self.presses = []
+        self.focused = []           # the presses that asked for the call window to come forward
         self.reads = 0
 
     # ---- what the monitor calls
@@ -38,14 +43,21 @@ class FakeTeams:
             names = {MIC_BUTTON: self.name or ("Unmute mic" if self.muted else "Mute mic"),
                      CAMERA_BUTTON: "Turn camera off" if self.camera else "Turn camera on",
                      SHARE_BUTTON: "Stop sharing" if self.sharing else "Share", HAND_BUTTON: "Raise"}
+            started = 0.0
+            if self.elapsed is not None:
+                started = now - int(self.elapsed + now - self.joined_at)      # the clock shows whole seconds
             return TeamsState(available=True, running=True, in_call=True, muted=parse_mic_name(names[MIC_BUTTON]),
                               camera=parse_camera_name(names[CAMERA_BUTTON]),
-                              sharing=parse_share_name(names[SHARE_BUTTON]), hand=self.hand, meeting=self.meeting,
+                              sharing=parse_share_name(names[SHARE_BUTTON]), hand=self.hand,
+                              shared=self.shared if self.sharing else "", meeting=self.meeting,
+                              camera_device=self.camera_device, started=started,
                               names=tuple(sorted(names.items())), read_at=now)
 
-    def press(self, control="mic"):
+    def press(self, control="mic", focus=False):
         with self.lock:
             self.presses.append(control)
+            if focus:
+                self.focused.append(control)
             if not self.in_call:
                 return False, "Not in a Teams call"
             if self.press_works:
@@ -53,15 +65,18 @@ class FakeTeams:
                     self.muted = not self.muted
                 elif control == "camera":
                     self.camera = not self.camera
+                elif control == "share" and self.sharing:       # Share itself only opens Teams' picker
+                    self.sharing = False
             return True, ""
 
     def close(self):
         pass
 
     # ---- what the tests call
-    def join(self, muted=False, camera=False):
+    def join(self, muted=False, camera=False, elapsed=None):
         with self.lock:
             self.in_call, self.muted, self.camera = True, muted, camera
+            self.elapsed, self.joined_at = elapsed, time.monotonic()
 
     def leave(self):
         with self.lock:

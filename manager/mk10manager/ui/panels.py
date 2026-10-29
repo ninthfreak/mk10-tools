@@ -518,10 +518,16 @@ class DevicePanel(QWidget):
                                    "they disagree and can't be put right, the live one is muted, never the other "
                                    "way round. Outside a call nothing is touched.")
         self.teams_sync.setChecked(bool(s.get("teams_sync_mic", True)))
+        self.teams_follow = QCheckBox("Use Teams' speaker and microphone")
+        self.teams_follow.setToolTip("Teams picks its own devices, whatever Windows' default is. During a call "
+                                     "the speaker and microphone keys (their names, mute and levels) follow the "
+                                     "devices Teams is actually using, found from Windows' audio sessions.")
+        self.teams_follow.setChecked(bool(s.get("teams_follow_devices", True)))
         trow.addWidget(self.teams_enabled)
         trow.addWidget(self.teams_sync)
         trow.addStretch(1)
         left.addRow("Microsoft Teams", self._wrap(trow))
+        left.addRow("", self.teams_follow)
         left.addRow("", self.teams_status)
 
         self.minimized = QCheckBox("Start hidden (in the tray)")
@@ -573,6 +579,7 @@ class DevicePanel(QWidget):
         self.np_art.toggled.connect(lambda on: self._np_setting("nowplaying_art", bool(on)))
         self.teams_enabled.toggled.connect(self._teams_setting)
         self.teams_sync.toggled.connect(lambda on: self._set("teams_sync_mic", bool(on)))
+        self.teams_follow.toggled.connect(self._teams_follow_setting)
         ctl.teams.changed.connect(self._show_teams)
         self._show_teams()
         self.levels.toggled.connect(lambda on: self._audio_setting("audio_levels", bool(on)))
@@ -645,6 +652,11 @@ class DevicePanel(QWidget):
         self.ctl.teams.refresh_soon()
         self.changed.emit()
 
+    def _teams_follow_setting(self, on):
+        self.ctl.config.settings["teams_follow_devices"] = bool(on)
+        self.ctl.apply_teams_settings()
+        self.changed.emit()
+
     def _show_teams(self):
         t = self.ctl.teams.state
         if isinstance(getattr(self.ctl.teams, "backend", None), teams_mod.NullTeams):
@@ -662,7 +674,10 @@ class DevicePanel(QWidget):
             if t.camera is not None:
                 text += ", camera %s" % ("on" if t.camera else "off")
             if t.sharing:
-                text += ", sharing"
+                text += ", sharing %s" % t.shared if t.shared else ", sharing"
+            if getattr(self.ctl.audio, "following", False):
+                a = self.ctl.audio.state
+                text += ". Using Teams' devices: %s, %s" % (a.input.name or "?", a.output.name or "?")
         self.teams_status.setText(text)
 
     def _audio_setting(self, key, value):
@@ -687,6 +702,7 @@ class DevicePanel(QWidget):
                      (self.np_art, s.get("nowplaying_art", True)),
                      (self.teams_enabled, s.get("teams_enabled", True)),
                      (self.teams_sync, s.get("teams_sync_mic", True)),
+                     (self.teams_follow, s.get("teams_follow_devices", True)),
                      (self.minimized, s.get("start_minimized", False))):
             w.blockSignals(True)
             w.setChecked(bool(v))
