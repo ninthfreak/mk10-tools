@@ -33,6 +33,7 @@ DEFAULT_SETTINGS = {
     "nowplaying_enabled": True,    # read what the system says is playing
     "nowplaying_art": True,        # fetch the album art too (a download, for players that give a URL)
     "teams_enabled": True,         # read Teams' call and mute state from its window (Windows only)
+    "teams_sync_mic": True,        # during a Teams call, keep the PC microphone's mute the same as Teams'
 }
 
 

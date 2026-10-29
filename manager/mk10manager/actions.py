@@ -48,10 +48,14 @@ ACTION_TYPES = {
         Field("message", "Message", "multiline", "", show_if=("mode", ("post",))),
     ]),
     "teams": ("Microsoft Teams", [
-        Field("mode", "Do", "choice", "mute_on",
-              [("mute_on", "Mute me"), ("mute_off", "Unmute me"), ("toggle", "Switch mute")],
-              help="Presses Teams' own mic button, but only after reading whether you're muted, and then checks "
-                   "Teams changed. Outside a call, or when it can't tell, it does nothing."),
+        Field("mode", "Do", "choice", "mic",
+              [("mic", "Mute or unmute me (Teams in a call, the PC microphone otherwise)"),
+               ("mute_on", "Mute me in Teams"), ("mute_off", "Unmute me in Teams"), ("toggle", "Switch Teams mute"),
+               ("camera_toggle", "Switch my camera"), ("camera_on", "Turn my camera on"),
+               ("camera_off", "Turn my camera off")],
+              help="Presses Teams' own button, but only after reading its state, and then checks Teams changed. "
+                   "Outside a call, or when it can't tell, it does nothing (the first one mutes the PC microphone "
+                   "instead)."),
     ]),
     "media": ("Media key", [
         Field("key", "Key", "choice", "play_pause", inputs.MEDIA_KEYS),
@@ -117,8 +121,9 @@ def summary(action: dict, page_name=lambda pid: pid) -> str:
     if t == "media":
         return dict(inputs.MEDIA_KEYS).get(a["key"], a["key"])
     if t == "teams":
-        return {"mute_on": "Teams: mute me", "mute_off": "Teams: unmute me",
-                "toggle": "Teams: switch mute"}.get(a["mode"], label)
+        return {"mic": "Mute or unmute me", "mute_on": "Teams: mute me", "mute_off": "Teams: unmute me",
+                "toggle": "Teams: switch mute", "camera_toggle": "Teams: switch my camera",
+                "camera_on": "Teams: camera on", "camera_off": "Teams: camera off"}.get(a["mode"], label)
     if t == "slack":
         mode = a["mode"]
         if mode == "status":
@@ -272,6 +277,20 @@ class ActionRunner(QObject):
                       minutes=a.get("snooze_minutes") if mode == "dnd" else a.get("minutes"))
         return self.slack.apply(mode, params)
 
+    def _teams(self, mode: str):
+        if mode == "mic":
+            # One key for the microphone: in a Teams call it's Teams' mute (the PC follows, if that's switched on),
+            # otherwise the PC microphone itself.
+            st = self.teams.state if self.teams is not None else None
+            if st is not None and st.available and st.in_call and st.muted is not None:
+                return self.teams.command("toggle")
+            if self.audio is None:
+                return False, audio_mod.NullAudio.note
+            return self.audio.apply(audio_mod.INPUT, "toggle_mute", 0)
+        if self.teams is None:
+            return False, "Teams isn't set up in this app."
+        return self.teams.command(mode)
+
     def _one(self, a: dict):
         t = a.get("type")
         if t in UI_ACTIONS:
@@ -286,10 +305,7 @@ class ActionRunner(QObject):
         elif t == "slack":
             ok, msg = self._slack(a)
         elif t == "teams":
-            if self.teams is None:
-                ok, msg = False, "Teams isn't set up in this app."
-            else:
-                ok, msg = self.teams.command(a.get("mode") or "mute_on")
+            ok, msg = self._teams(a.get("mode") or "mic")
         elif t == "audio":
             if self.audio is None:
                 ok, msg = False, audio_mod.NullAudio.note

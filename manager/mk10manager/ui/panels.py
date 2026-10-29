@@ -512,7 +512,14 @@ class DevicePanel(QWidget):
         self.teams_enabled.setChecked(bool(s.get("teams_enabled", True)))
         self.teams_status = _muted("")
         self.teams_status.setWordWrap(True)
+        self.teams_sync = QCheckBox("Keep the PC microphone in step")
+        self.teams_sync.setToolTip("During a Teams call, muting in Teams mutes the PC microphone too, and muting "
+                                   "the PC microphone (the MK10's key, a keyboard's mic key) mutes Teams. When "
+                                   "they disagree and can't be put right, the live one is muted, never the other "
+                                   "way round. Outside a call nothing is touched.")
+        self.teams_sync.setChecked(bool(s.get("teams_sync_mic", True)))
         trow.addWidget(self.teams_enabled)
+        trow.addWidget(self.teams_sync)
         trow.addStretch(1)
         left.addRow("Microsoft Teams", self._wrap(trow))
         left.addRow("", self.teams_status)
@@ -565,6 +572,7 @@ class DevicePanel(QWidget):
         self.np_enabled.toggled.connect(lambda on: self._np_setting("nowplaying_enabled", bool(on)))
         self.np_art.toggled.connect(lambda on: self._np_setting("nowplaying_art", bool(on)))
         self.teams_enabled.toggled.connect(self._teams_setting)
+        self.teams_sync.toggled.connect(lambda on: self._set("teams_sync_mic", bool(on)))
         ctl.teams.changed.connect(self._show_teams)
         self._show_teams()
         self.levels.toggled.connect(lambda on: self._audio_setting("audio_levels", bool(on)))
@@ -640,7 +648,7 @@ class DevicePanel(QWidget):
     def _show_teams(self):
         t = self.ctl.teams.state
         if isinstance(getattr(self.ctl.teams, "backend", None), teams_mod.NullTeams):
-            text = "Only on Windows. Teams on Linux runs in a browser, which can't be read yet."
+            text = "Only on Windows for now. Teams for Linux has a control interface this could use later."
         elif not t.available:
             text = t.note or "Can't read Teams."
         elif not t.running:
@@ -650,7 +658,11 @@ class DevicePanel(QWidget):
         elif t.muted is None:
             text = "In a call; can't tell if you're muted (the button says “%s”)" % t.button_name
         else:
-            text = "In a call, %s" % ("muted" if t.muted else "live")
+            text = "In %s: %s" % ("“%s”" % t.meeting if t.meeting else "a call", "muted" if t.muted else "live")
+            if t.camera is not None:
+                text += ", camera %s" % ("on" if t.camera else "off")
+            if t.sharing:
+                text += ", sharing"
         self.teams_status.setText(text)
 
     def _audio_setting(self, key, value):
@@ -674,6 +686,7 @@ class DevicePanel(QWidget):
                      (self.np_enabled, s.get("nowplaying_enabled", True)),
                      (self.np_art, s.get("nowplaying_art", True)),
                      (self.teams_enabled, s.get("teams_enabled", True)),
+                     (self.teams_sync, s.get("teams_sync_mic", True)),
                      (self.minimized, s.get("start_minimized", False))):
             w.blockSignals(True)
             w.setChecked(bool(v))

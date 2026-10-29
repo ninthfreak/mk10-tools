@@ -7,7 +7,7 @@ from datetime import datetime
 from ..system.audio import INPUT, OUTPUT, AudioState
 from ..system.nowplaying import Track, format_time as format_track_time
 from ..system.slack import SlackState
-from ..system.teams import TeamsState
+from ..system.teams import TeamsState, short_device_name
 
 PLACEHOLDER = re.compile(r"\{([a-zA-Z_]+)(?::([^{}]*))?\}")
 
@@ -32,7 +32,9 @@ HELP = (
     "{track}  {artist}  {album}  {player}  what's playing now\n"
     "{track_time}  {track_length}  how far in, and how long\n"
     "{teams_call}  “in a call”, or nothing      {teams_mic}  “muted” / “live” in a Teams call\n"
-    "{teams_mic:Muted|Live}  your own two words"
+    "{teams_mic:Muted|Live}  your own two words\n"
+    "{teams_camera}  {teams_sharing}  {teams_hand}  {teams_meeting}  {teams_time}  (how long the call has run)\n"
+    "{in_device:short}  {out_device:short}  just the part of the device name in brackets"
 )
 
 
@@ -94,7 +96,7 @@ def expand(text: str, ctx: RenderContext, output: str = "") -> str:
         audio = ctx.audio or AudioState()
         side = audio.side(INPUT if name.startswith("mic_") or name.startswith("in_") else OUTPUT)
         if name in ("out_device", "in_device"):
-            return side.name
+            return short_device_name(side.name) if (arg or "").strip().lower() == "short" else side.name
         if name in ("volume", "mic_volume"):
             return "" if side.volume is None else str(side.volume)
         if name in ("level", "mic_level"):
@@ -110,11 +112,15 @@ def expand(text: str, ctx: RenderContext, output: str = "") -> str:
             return _slack(name, arg, ctx.slack or SlackState())
         if name in ("track", "artist", "album", "player", "track_time", "track_length", "track_status"):
             return _now_playing(name, ctx.now_playing or Track())
-        if name in ("teams_call", "teams_mic"):
+        if name.startswith("teams_"):
             return _teams(name, arg, ctx.teams or TeamsState(available=False))
         return m.group(0)
 
     return PLACEHOLDER.sub(sub, text)
+
+
+TEAMS_WORDS = {"teams_mic": ("muted", "muted", "live"), "teams_camera": ("camera", "on", "off"),
+               "teams_sharing": ("sharing", "sharing", "not sharing"), "teams_hand": ("hand", "raised", "down")}
 
 
 def _teams(name: str, arg, t: TeamsState) -> str:
@@ -122,12 +128,20 @@ def _teams(name: str, arg, t: TeamsState) -> str:
         return ""
     if name == "teams_call":
         return _two_words(arg, "in a call")[0]
-    if t.muted is None:
+    if name == "teams_meeting":
+        return t.meeting
+    if name == "teams_time":
+        return format_track_time(t.call_seconds())
+    if name not in TEAMS_WORDS:
+        return "{%s}" % name
+    field_name, yes, no = TEAMS_WORDS[name]
+    value = getattr(t, field_name)
+    if value is None:
         return ""
     words = [w.strip() for w in (arg or "").split("|")]
-    muted = words[0] if words and words[0] else "muted"
-    live = words[1] if len(words) > 1 and words[1] else "live"
-    return muted if t.muted else live
+    on = words[0] if words and words[0] else yes
+    off = words[1] if len(words) > 1 and words[1] else no
+    return on if value else off
 
 
 def _two_words(arg, when_true: str) -> tuple[str, str]:

@@ -56,21 +56,6 @@ def _mute_key(target, label, muted_label, icon, muted_icon, meter_color):
     return k
 
 
-def _teams_key(label, mode, icon):
-    """A Teams key. Its colour shows Teams' own mute state: orange muted, blue live, plain outside a call.
-    Mute lights up only once you're muted, and Unmute only once you're live, so in a call the key that would
-    change something stays plain and the one that's already done is lit. Switch always shows the state."""
-    k = _key(label, icon, DARK, [{"type": "teams", "mode": mode}])
-    muted = new_state("teams_muted")
-    muted.update({"value": "yes", "use_bg": True, "bg": ORANGE, "use_label": True, "label": "Muted",
-                  "icon_mode": "choose", "icon": "microphone-off", "icon_color": "#FFFFFF"})
-    live = new_state("teams_muted")
-    live.update({"value": "no", "use_bg": True, "bg": BLUE, "use_label": True, "label": "Live",
-                 "icon_mode": "choose", "icon": "microphone", "icon_color": "#FFFFFF"})
-    k["states"] = {"mute_on": [muted], "mute_off": [live]}.get(mode, [muted, live])
-    return k
-
-
 def _pad(keys) -> list:
     keys = list(keys)
     return keys + [None] * (KEY_COUNT - len(keys))
@@ -155,24 +140,29 @@ def slack_page() -> Page:
                 "Show this page whenever I'm in a Slack huddle")
 
 
+def _state(when, value, bg, icon, label=None):
+    s = new_state(when)
+    s.update({"value": value, "use_bg": True, "bg": bg, "icon_mode": "choose", "icon": icon, "icon_color": "#FFFFFF"})
+    if label is not None:
+        s.update({"use_label": True, "label": label})
+    return s
+
+
 def teams_page() -> Page:
-    """Teams' own mute state on the keys, explicit mute and unmute, and the real microphone beside them."""
-    in_call = _key("Teams", "brand-teams", DARK, [{"type": "open", "target": "msteams:"}])
-    on_call = new_state("teams_call")
-    on_call.update({"value": "yes", "use_bg": True, "bg": BLUE, "use_label": True, "label": "In a call",
-                    "icon_mode": "keep"})
-    in_call["states"] = [on_call]
-    keys = [
-        _teams_key("Mute", "mute_on", "microphone-off"),
-        _teams_key("Unmute", "mute_off", "microphone"),
-        _teams_key("Switch", "toggle", "microphone-2"),
-        in_call,
-        _key("Back", "arrow-back-up", DARK, [{"type": "page", "mode": "back"}]),
-        _mute_key(INPUT, "Mic", "Mic off", "microphone", "microphone-off", LIGHT_ORANGE),
-        _mute_key(OUTPUT, "Sound", "Muted", "volume", "volume-off", LIGHT_BLUE),
-    ]
+    """One key each for the microphone, the speakers and the camera, each naming its device, and the whole call
+    on the small screen. In a call the microphone key is Teams' mute, and the PC microphone follows it."""
+    mic = _key("{in_device:short}", "microphone", DARK, [{"type": "teams", "mode": "mic"}])
+    mic["states"] = [_state("teams_muted", "yes", ORANGE, "microphone-off"),     # muted in Teams
+                     _state("input_muted", "yes", ORANGE, "microphone-off"),     # or the PC microphone is
+                     _state("teams_muted", "no", BLUE, "microphone")]            # live in a call
+    sound = _key("{out_device:short}", "volume", DARK, [{"type": "audio", "target": OUTPUT, "mode": "toggle_mute"}])
+    sound["states"] = [_state("output_muted", "yes", ORANGE, "volume-off")]
+    camera = _key("Camera", "video-off", DARK, [{"type": "teams", "mode": "camera_toggle"}])
+    camera["states"] = [_state("teams_camera", "yes", BLUE, "video", "Camera on"),
+                        _state("teams_camera", "no", DARK, "video-off", "Camera off")]
+    keys = [mic, sound, camera, None, _key("Back", "arrow-back-up", DARK, [{"type": "page", "mode": "back"}])]
     rule = {"enabled": True, "when": "teams_call", "value": "yes", "page": None}
-    return Page(_pad(keys), {"face": "analog", "options": {}}, rule, "Show this page whenever I'm in a Teams call")
+    return Page(_pad(keys), {"face": "teams", "options": {}}, rule, "Show this page whenever I'm in a Teams call")
 
 
 TEMPLATES = [
@@ -188,13 +178,15 @@ TEMPLATES = [
                     "Slack can't tell us whether you're muted inside a huddle, and can't start or join one. "
                     "The microphone key mutes the microphone itself, which works everywhere.")),
     Template("teams", "Microsoft Teams",
-             "Mute, unmute and switch keys that show Teams' own mute state (orange muted, blue live), an "
-             "in-a-call indicator, and the real microphone and speakers beside them.",
+             "One key each for the microphone, the speakers and the camera, each naming its device. Orange is "
+             "muted, blue is live or on. The small screen shows the meeting, how long it's run, and the "
+             "microphone, speakers, camera, sharing and raised hand.",
              teams_page,
              setup=("Windows only, and Teams has to be in English: the keys read Teams' window the way a screen "
                     "reader does.",
-                    "Mute and Unmute press Teams' button only after checking it's needed, and do nothing outside "
-                    "a call.")),
+                    "In a call the microphone key is Teams' mute and the PC microphone follows it (switch that off "
+                    "on the Device and app tab). Outside a call it mutes the PC microphone.",
+                    "The camera key only works in a call. It can't name the camera yet.")),
 ]
 
 

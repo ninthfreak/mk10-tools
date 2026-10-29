@@ -20,6 +20,8 @@ from .system.activewin import ActiveAppWatcher
 from .system.audio import AudioMonitor
 from .system.nowplaying import NowPlayingMonitor
 from .system.slack import SlackMonitor, channel_ids, read_token
+from .micsync import PC_MUTE, PC_UNMUTE, TEAMS_MUTE, TEAMS_UNMUTE, MicSync
+from .system.audio import INPUT
 from .system.teams import TeamsMonitor
 
 NOT_UNDOABLE = ("variables", "seen_apps")
@@ -27,7 +29,7 @@ NOT_UNDOABLE = ("variables", "seen_apps")
 NOT_UNDOABLE_SETTINGS = ("brightness", "port", "press_feedback", "time_24h", "font_family", "start_minimized",
                          "tray_hint_shown", "audio_levels", "meter_fps", "slack_enabled", "slack_team_id",
                          "slack_channels", "slack_unread_source", "slack_poll_seconds",
-                         "nowplaying_enabled", "nowplaying_art", "teams_enabled")
+                         "nowplaying_enabled", "nowplaying_art", "teams_enabled", "teams_sync_mic")
 SLOW_TICK_MS = 200          # how often we look at the clock and the message timer when nothing is animating
 _NO_RESULT = object()
 
@@ -95,6 +97,7 @@ class Controller(QObject):
         self.slack = slack or SlackMonitor()
         self.nowplaying = nowplaying or NowPlayingMonitor()
         self.teams = teams or TeamsMonitor()
+        self.micsync = MicSync()
         self.runner = ActionRunner(self.audio, self.slack, self.teams)
         self.layout = DeviceLayout.default()
         self.page_id = config.default_page()["id"]
@@ -211,6 +214,8 @@ class Controller(QObject):
             self._last_minute = now.minute
             if any(r.get("when") == "time" for r in self.config.rules):
                 self._evaluate_rules()
+        if now.second != self._last_second and self.teams.state.in_call:
+            self._sync_mic()        # a follow that didn't land gets looked at again once it's had its time
         self._update_live_meters()
         self._run_face_command()
         if self._live_targets and self.device.is_connected and not self.device.ready_for_frame:
@@ -284,7 +289,21 @@ class Controller(QObject):
 
     def _on_teams(self):
         self._dirty = True
+        self._sync_mic()
         self._evaluate_rules()
+
+    def _sync_mic(self):
+        """During a Teams call, keep the PC microphone's mute and Teams' mute the same (see micsync.py)."""
+        if not self.config.settings.get("teams_sync_mic", True):
+            self.micsync.reset()
+            return
+        audio = self.audio.state
+        pc_muted = audio.input.muted if audio.available else None
+        action = self.micsync.decide(self.teams.state, pc_muted, time.monotonic())
+        if action in (PC_MUTE, PC_UNMUTE):
+            self.runner.run([{"type": "audio", "target": INPUT, "mode": "mute" if action == PC_MUTE else "unmute"}])
+        elif action in (TEAMS_MUTE, TEAMS_UNMUTE):
+            self.runner.run([{"type": "teams", "mode": "mute_on" if action == TEAMS_MUTE else "mute_off"}])
 
     def _on_audio(self):
         self._dirty = True
@@ -292,6 +311,7 @@ class Controller(QObject):
                     self.audio.state.output.volume, self.audio.state.input.volume)
         if switches != self._last_audio_switches:      # levels move constantly; mute and volume don't
             self._last_audio_switches = switches
+            self._sync_mic()
             self._evaluate_rules()
 
     # ---------------------------------------------------------------- device events

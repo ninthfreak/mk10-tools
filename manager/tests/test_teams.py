@@ -2,6 +2,7 @@
 rules, placeholders and actions. The UI Automation reader itself needs Windows; these drive a fake one."""
 
 import time
+from dataclasses import replace
 
 import pytest
 from PySide6.QtCore import QObject, Signal
@@ -14,7 +15,12 @@ from mk10manager.config import Config
 from mk10manager.controller import Controller
 from mk10manager.render.template import RenderContext, expand
 from mk10manager.system import teams as teams_mod
-from mk10manager.system.teams import TeamsMonitor, TeamsState, parse_mic_name
+from mk10manager.system.audio import INPUT, OUTPUT, AudioMonitor, AudioState, Endpoint
+from mk10manager.system.teams import (MIC_BUTTON, TeamsMonitor, TeamsState, meeting_from_title, parse_camera_name,
+                                      parse_mic_name, parse_pressed, parse_share_name, short_device_name)
+from mk10manager import micsync
+from mk10manager.micsync import MicSync
+from fake_audio import FakeAudio
 
 
 class FakeWatcher(QObject):
@@ -30,7 +36,8 @@ class FakeWatcher(QObject):
 
 def in_call(muted=False, name=None) -> TeamsState:
     name = name or ("Unmute mic" if muted else "Mute mic")
-    return TeamsState(available=True, running=True, in_call=True, muted=parse_mic_name(name), button_name=name)
+    return TeamsState(available=True, running=True, in_call=True, muted=parse_mic_name(name),
+                      names=((MIC_BUTTON, name),))
 
 
 # ---------------------------------------------------------------- reading the button
@@ -65,7 +72,7 @@ def test_mute_me_presses_once_and_checks_it_took(qapp, mon):
     m, fake = mon
     fake.join(muted=False)
     assert m.command("mute_on") == (True, "")
-    assert fake.presses == 1 and fake.muted
+    assert len(fake.presses) == 1 and fake.muted
     assert m.state.muted is True, "the state should show the change straight away"
 
 
@@ -73,7 +80,7 @@ def test_mute_me_when_already_muted_presses_nothing(qapp, mon):
     m, fake = mon
     fake.join(muted=True)
     assert m.command("mute_on") == (True, "already")
-    assert fake.presses == 0 and fake.muted
+    assert fake.presses == [] and fake.muted
 
 
 def test_unmute_me_and_switch(qapp, mon):
@@ -83,14 +90,14 @@ def test_unmute_me_and_switch(qapp, mon):
     assert not fake.muted
     assert m.command("mute_off") == (True, "already")
     assert m.command("toggle") == (True, "")
-    assert fake.muted and fake.presses == 2
+    assert fake.muted and len(fake.presses) == 2
 
 
 def test_nothing_is_pressed_outside_a_call(qapp, mon):
     m, fake = mon
     ok, message = m.command("mute_on")
     assert not ok and "Not in a Teams call" in message
-    assert fake.presses == 0
+    assert fake.presses == []
 
 
 @pytest.mark.parametrize("kind", ["mute_on", "mute_off", "toggle"])
@@ -100,7 +107,7 @@ def test_nothing_is_pressed_when_the_state_cant_be_read(qapp, mon, kind):
     fake.name = "Stummschaltung"
     ok, message = m.command(kind)
     assert not ok and "Can't tell" in message and "Stummschaltung" in message
-    assert fake.presses == 0
+    assert fake.presses == []
 
 
 def test_a_press_teams_ignores_is_reported(qapp, mon):
@@ -109,7 +116,7 @@ def test_a_press_teams_ignores_is_reported(qapp, mon):
     fake.press_works = False
     ok, message = m.command("mute_on")
     assert not ok and "still shows you live" in message
-    assert fake.presses == 1, "one press, then it only reads"
+    assert len(fake.presses) == 1, "one press, then it only reads"
 
 
 def test_switched_off_does_nothing(qapp, mon):
@@ -200,16 +207,25 @@ def test_placeholders():
 
 def test_action_summary_and_template():
     assert actions.summary({"type": "teams", "mode": "mute_off"}) == "Teams: unmute me"
-    assert actions.new_action("teams")["mode"] == "mute_on"
+    assert actions.summary({"type": "teams", "mode": "camera_toggle"}) == "Teams: switch my camera"
+    assert actions.new_action("teams")["mode"] == "mic"
     page = templates.build("teams")
-    keys = [k for k in page.keys if k]
-    modes = [a["mode"] for k in keys for a in k["actions"] if a["type"] == "teams"]
-    assert modes == ["mute_on", "mute_off", "toggle"]
-    assert page.rule["when"] == "teams_call"
-    labels = lambda st: [conditions.resolve_key(k, RenderContext(teams=st))["label"] for k in keys[:3]]
-    assert labels(in_call(muted=True)) == ["Muted", "Unmute", "Muted"], "the key that's done is lit"
-    assert labels(in_call(muted=False)) == ["Mute", "Live", "Live"]
-    assert labels(TeamsState(available=True)) == ["Mute", "Unmute", "Switch"], "outside a call they're just keys"
+    mic, sound, camera = page.keys[:3]
+    assert [a["mode"] for a in mic["actions"]] == ["mic"]
+    assert sound["actions"][0]["type"] == "audio" and sound["actions"][0]["target"] == OUTPUT
+    assert [a["mode"] for a in camera["actions"]] == ["camera_toggle"]
+    assert page.rule["when"] == "teams_call" and page.screen["face"] == "teams"
+    audio = AudioState(Endpoint("Headphones (Jabra Evolve2 65)", False, 50), Endpoint("Microphone (Realtek(R) Audio)",
+                                                                                      False, 50), True)
+    look = lambda key, st, a=audio: conditions.resolve_key(key, RenderContext(teams=st, audio=a))
+    assert expand(look(mic, TeamsState())["label"], RenderContext(audio=audio)) == "Realtek(R) Audio"
+    assert look(mic, in_call(muted=True))["bg"] == templates.ORANGE
+    assert look(mic, in_call(muted=False))["bg"] == templates.BLUE
+    pc_muted = AudioState(audio.output, Endpoint(audio.input.name, True, 50), True)
+    assert look(mic, TeamsState(), pc_muted)["bg"] == templates.ORANGE, "outside a call it shows the PC microphone"
+    assert look(camera, replace(in_call(), camera=True))["label"] == "Camera on"
+    assert look(camera, replace(in_call(), camera=False))["label"] == "Camera off"
+    assert look(camera, TeamsState())["label"] == "Camera"
 
 
 # ---------------------------------------------------------------- end to end
@@ -241,13 +257,15 @@ def test_a_key_mutes_teams_and_shows_it(qapp, rig):
     assert wait_until(qapp, lambda: ctl.teams.state.live, 3)
     failures = []
     ctl.runner.failed.connect(failures.append)
-    ctl.runner.run(page.keys[0]["actions"])                 # the Mute key
+    ctl.runner.run([{"type": "teams", "mode": "mute_on"}])
     assert wait_until(qapp, lambda: fake.muted and ctl.teams.state.muted is True, 3), failures
-    assert conditions.resolve_key(ctl.page["keys"][0], ctl.context())["label"] == "Muted"
+    assert conditions.resolve_key(ctl.page["keys"][0], ctl.context())["bg"] == templates.ORANGE
     assert expand("{teams_mic}", ctl.context()) == "muted"
-    ctl.runner.run(page.keys[0]["actions"])                 # again: already muted, nothing pressed
+    ctl.runner.run([{"type": "teams", "mode": "mute_on"}])  # again: already muted, nothing pressed
     time.sleep(0.3)
-    assert fake.presses == 1 and not failures
+    assert len(fake.presses) == 1 and not failures
+    ctl.runner.run(page.keys[2]["actions"])                 # the camera key
+    assert wait_until(qapp, lambda: fake.camera and ctl.teams.state.camera is True, 3), failures
 
 
 def test_a_teams_call_rule_switches_pages(qapp, rig):
@@ -270,3 +288,175 @@ def test_switch_it_off_from_settings(qapp, rig):
     ctl.apply_teams_settings()
     assert wait_until(qapp, lambda: not ctl.teams.state.available, 3)
     assert "teams_enabled" in __import__("mk10manager.controller", fromlist=["x"]).NOT_UNDOABLE_SETTINGS
+
+
+# ---------------------------------------------------------------- round 2: camera, sharing, hand, meeting
+@pytest.mark.parametrize("fn, name, value", [
+    (parse_camera_name, "Turn camera off", True), (parse_camera_name, "Turn camera on", False),
+    (parse_camera_name, "Kamera", None), (parse_share_name, "Stop sharing", True), (parse_share_name, "Share", False),
+    (parse_share_name, "", None),
+])
+def test_button_names(fn, name, value):
+    assert fn(name) is value
+
+
+def test_pressed_state_and_titles():
+    assert parse_pressed("pressed=true;haspopup=false") is True
+    assert parse_pressed("expanded=false;pressed=false") is False
+    assert parse_pressed("", 1) is True and parse_pressed("", 0) is False
+    assert parse_pressed("haspopup=menu") is None and parse_pressed("", None) is None
+    assert meeting_from_title("Test | Lemans Corporation | me@x.com | Microsoft Teams") == "Test"
+    assert meeting_from_title("Microsoft Teams") == ""
+    assert short_device_name("Headset Microphone (Jabra Evolve2 65)") == "Jabra Evolve2 65"
+    assert short_device_name("Microphone (Realtek(R) Audio)") == "Realtek(R) Audio"
+    assert short_device_name("Built-in Audio") == "Built-in Audio"
+
+
+def test_camera_commands(qapp, mon):
+    m, fake = mon
+    fake.join(camera=False)
+    assert m.command("camera_on") == (True, "")
+    assert fake.camera and fake.presses == ["camera"]
+    assert m.command("camera_on") == (True, "already")
+    assert m.command("camera_toggle") == (True, "") and not fake.camera
+    fake.press_works = False
+    ok, message = m.command("camera_on")
+    assert not ok and "camera off" in message
+
+
+def test_the_call_clock_and_meeting(qapp, mon):
+    m, fake = mon
+    fake.join()
+    assert wait_until(qapp, lambda: m.state.in_call, 2)
+    since = m.state.call_since
+    assert since and m.state.meeting == "Weekly sync"
+    fake.muted = True
+    assert wait_until(qapp, lambda: m.state.muted is True, 2)
+    assert m.state.call_since == since, "the clock keeps running through changes"
+
+
+def test_more_conditions_and_placeholders():
+    st = replace(in_call(), camera=True, sharing=False, hand=None, meeting="Weekly sync",
+                 call_since=time.monotonic() - 75)
+    t = lambda when, value, s=st: conditions.matches({"when": when, "value": value}, teams=s)
+    assert t("teams_camera", "yes") and not t("teams_camera", "no")
+    assert t("teams_sharing", "no") and not t("teams_sharing", "yes")
+    assert not t("teams_hand", "yes") and not t("teams_hand", "no"), "unknown is never true"
+    ctx = RenderContext(teams=st)
+    assert expand("{teams_camera} {teams_sharing} [{teams_hand}]", ctx) == "on not sharing []"
+    assert expand("{teams_meeting} {teams_time}", ctx) == "Weekly sync 1:15"
+    assert expand("{teams_camera:Live|Dark}", ctx) == "Live"
+
+
+# ---------------------------------------------------------------- keeping the PC microphone in step
+def call_state(muted):
+    return in_call(muted=muted)
+
+
+def test_sync_rules():
+    s = MicSync()
+    assert s.decide(TeamsState(available=True), False, 0) is None, "outside a call nothing is touched"
+    assert s.decide(call_state(True), False, 0) == micsync.PC_MUTE, "a call starts: the PC follows Teams"
+    assert s.decide(call_state(True), False, 1) is None, "give the follow time to land"
+    assert s.decide(call_state(True), True, 1.5) is None, "they agree"
+    assert s.decide(call_state(False), True, 2) == micsync.PC_UNMUTE, "Teams changed: the PC follows"
+    assert s.decide(call_state(False), False, 2.2) is None
+    assert s.decide(call_state(False), True, 10) == micsync.TEAMS_MUTE, "the PC changed: Teams follows"
+    assert s.decide(call_state(True), True, 10.5) is None
+    assert s.decide(call_state(True), False, 20) == micsync.TEAMS_UNMUTE
+
+
+def test_sync_never_unmutes_to_settle_a_disagreement():
+    s = MicSync()
+    s.decide(call_state(False), False, 0)
+    assert s.decide(call_state(False), True, 1) == micsync.TEAMS_MUTE      # the PC muted: Teams should follow
+    # ... but Teams never does. Once the follow has had its time, the live side (Teams) is muted again, not the
+    # PC unmuted.
+    assert s.decide(call_state(False), True, 5) == micsync.TEAMS_MUTE
+    assert s.decide(call_state(False), True, 9) == micsync.TEAMS_MUTE
+    assert s.decide(call_state(False), True, 13) is None, "three tries, then it stops nagging"
+    assert s.decide(call_state(True), True, 14) is None, "and picks up again once they agree"
+
+
+def test_sync_switched_off_or_unreadable():
+    s = MicSync()
+    assert s.decide(call_state(None), False, 0) is None
+    assert s.decide(call_state(True), None, 0) is None
+    assert s.decide(TeamsState(available=False), True, 0) is None
+
+
+@pytest.fixture
+def sync_rig(qapp, tmp_path, monkeypatch):
+    dev = FakeMK10("v2")
+    dev.start()
+    monkeypatch.setenv("MK10_PORT", dev.port)
+    cfg = Config(path=tmp_path / "config.json")
+    fake, audio = FakeTeams(), FakeAudio()
+    mon = TeamsMonitor(fake)
+    mon.IDLE = mon.BUSY = 0.05
+    mon.CONFIRM_SECONDS = 0.5
+    am = AudioMonitor(audio)
+    am.SLOW = am.FAST = 0.05
+    ctl = Controller(cfg, watcher=FakeWatcher(), audio=am, teams=mon)
+    ctl.micsync.PENDING_SECONDS = 0.6
+    ctl.start()
+    assert wait_until(qapp, lambda: ctl.device.is_connected, 5), ctl.device.status
+    yield ctl, fake, audio
+    ctl.shutdown()
+    dev.unplug()
+
+
+def test_the_pc_microphone_follows_teams_and_back(qapp, sync_rig):
+    ctl, fake, audio = sync_rig
+    fake.join(muted=True)
+    assert wait_until(qapp, lambda: audio.sides[INPUT].muted is True, 4), "joining muted mutes the PC too"
+    with fake.lock:
+        fake.muted = False                                   # unmuted in Teams' own window
+    assert wait_until(qapp, lambda: audio.sides[INPUT].muted is False, 4)
+    audio.set(INPUT, muted=True)                             # a keyboard's mic key
+    assert wait_until(qapp, lambda: fake.muted is True, 4), "Teams follows the PC"
+    fake.leave()
+    assert wait_until(qapp, lambda: not ctl.teams.state.in_call, 4)
+    audio.set(INPUT, muted=False)
+    time.sleep(0.5)
+    assert fake.muted is True, "outside a call nothing is synced"
+
+
+def test_the_mic_key_is_teams_in_a_call_and_the_pc_otherwise(qapp, sync_rig):
+    ctl, fake, audio = sync_rig
+    key = templates.build("teams").keys[0]
+    assert wait_until(qapp, lambda: ctl.audio.state.available, 3)
+    ctl.runner.run(key["actions"])
+    assert wait_until(qapp, lambda: audio.sides[INPUT].muted is True, 3), "no call: the PC microphone"
+    assert fake.presses == []
+    audio.set(INPUT, muted=False)
+    fake.join(muted=False)
+    assert wait_until(qapp, lambda: ctl.teams.state.live, 3)
+    ctl.runner.run(key["actions"])
+    assert wait_until(qapp, lambda: fake.muted and audio.sides[INPUT].muted is True, 4), \
+        "in a call: Teams, and the PC follows"
+    assert fake.presses == ["mic"]
+
+
+def test_sync_can_be_switched_off(qapp, sync_rig):
+    ctl, fake, audio = sync_rig
+    ctl.config.settings["teams_sync_mic"] = False
+    fake.join(muted=True)
+    assert wait_until(qapp, lambda: ctl.teams.state.muted is True, 3)
+    time.sleep(0.5)
+    assert audio.sides[INPUT].muted is False
+
+
+def test_the_teams_screen_paints(qapp):
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QImage, QPainter
+    from mk10manager.render.canvas import Renderer
+    face = Renderer().face("teams")
+    audio = AudioState(Endpoint("Speakers (X)", True, 50), Endpoint("Mic (Y)", False, 50), True)
+    for st in (replace(in_call(muted=True), camera=True, sharing=True, hand=True, meeting="Weekly sync",
+                       call_since=time.monotonic() - 30),
+               TeamsState(available=True, running=False), TeamsState(available=False, note="Windows only")):
+        img = QImage(240, 296, QImage.Format_RGB32)
+        p = QPainter(img)
+        face.paint(p, QRectF(0, 0, 240, 296), {}, RenderContext(teams=st, audio=audio))
+        p.end()
