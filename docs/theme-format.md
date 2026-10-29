@@ -155,7 +155,7 @@ sends cmd 15 in some other situation (at boot, before a host connects; on a page
 Also proven by the same run, all for the first time on hardware:
 
 - the device loads a theme our writer produced;
-- `lunch-theme-test.sh` switched and restored `config.json` on the device's own busybox;
+- `lunch-tests.sh` (then called `lunch-theme-test.sh`) switched and restored `config.json` on the device's own busybox;
 - `saveToFile` writes `/mnt/SDCARD` as well as `/data`.
 
 Not yet tested: whether gauges, bars and state images (types 101, 102, 109, 114) take custom names the
@@ -184,7 +184,7 @@ same way text does; non-numeric strings; how fast values can be pushed before th
 | Key presses reach the host while a theme runs | **yes** — both middle keys, down and up, as the usual V2 `keyStateChanged`. So the manager keeps its key actions with a theme loaded |
 
 Photos taken afterwards, on the stock theme (the test had reverted on the next boot, as designed — the first
-hardware confirmation that `lunch-theme-test.sh` undoes itself), added three things:
+hardware confirmation that `lunch-tests.sh` undoes itself), added three things:
 
 - **The device does not run the theme's clock itself.** The hour and minute items show their placeholder
   `Text` unless the host pushes `时` and `分`. ScreenKey must push the time.
@@ -241,7 +241,7 @@ other key-action names: page switching is something the device does **when its o
 three ways. The device sent **nothing back to any of them** and the screen didn't change, where every live-data
 push gets an acknowledgement within milliseconds. So as far as we can tell the host can neither switch pages
 nor reload a theme; changing which theme is shown takes `config.json` and a restart, which
-`lunch-theme-test.sh` already does without removing the card.
+`lunch-tests.sh` already does without removing the card.
 
 ### `/data/info/ThemeMessage`
 

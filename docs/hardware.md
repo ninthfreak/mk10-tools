@@ -26,13 +26,23 @@ Waveshare MK10 "Multi-Functional AI Voice Control Panel": 10 LCD keys plus a 2.0
 - **Keyboard chip:** a GD32 running QMK, VIA-enabled (`syk_keyboards_mk10_via.bin`). It reads the keys and also
   acts as a USB keyboard in its own right.
 - **USB internal hub:** `05E3:0610`.
-- **Wi-Fi:** the firmware configures it, so the board seems to have it *(not checked on the board itself)*.
+- **Wi-Fi:** none on the board. The USB-A port is the T113's own host port (`usbc1`, host-only) for Waveshare's
+  optional RTL8188GU Wi-Fi stick: `qt_app1` runs `usb_modeswitch` on `0bda:1a2b`, its driver-CD mode.
+- **Audio:** a built-in mic and speaker. Waveshare's docs list both, the holes are on the case, the XiaoZhi
+  voice assistant records from `hw:audiocodec`, and `config.json` has `deviceVolume`.
+  - `/etc/asound.conf` shares them: playback through `dmix` (48 kHz, 4×1024 frames, ~85 ms), capture through
+    `dsnoop` (16 kHz, 3 channels; `CaptureMic` is a 2-channel view of it).
+  - Waveshare's app has a **USB-speaker mode**: `usbTYpe` in `config.json` makes it run `setusbconfig uac1`
+    and pipe the gadget's sound card into the speaker. That mode replaces the serial port.
+    See [call-control.md](call-control.md).
+- **Bluetooth:** the kernel has the core (`CONFIG_BT=y`) but **no USB Bluetooth driver** (`CONFIG_BT_HCIBTUSB`
+  is off), so a USB Bluetooth adapter won't work. [call-control.md](call-control.md) has the options.
 
 ## USB IDs (from a real MK10 on Windows)
 
 | ID | What | Notes |
 |---|---|---|
-| `1D6B:0104` | Serial port (CDC-ACM gadget) | Pictures and key events. Generic Linux gadget ID |
+| `1D6B:0104` | Serial port (CDC-ACM gadget) | Pictures and key events. Generic Linux gadget ID. `KeyboardDevice` builds it with `/data/setusbconfig serial` |
 | `4250:426F` | Keyboard chip (QMK) | Interfaces: MI_00 keyboard, MI_01 vendor HID, MI_02 mouse/system/consumer, MI_03 vendor HID |
 | `05E3:0610` | Internal hub | |
 

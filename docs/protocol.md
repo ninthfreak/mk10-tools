@@ -259,7 +259,10 @@ and one with a bad one.
 - It has built-in theme widgets: analogue, digital and flip clocks, and an image-based clock made of a dial picture
   plus hand pictures with pivot points (`QGraphicsPixmapItemClockMake`: `OriginPoint_ax`, `OriginPoint_ay`, `path`,
   `rotate`, `scale`, `type`). Also progress rings, text widgets, a media viewer and charts.
-  - Themes come from ScreenKey. The SD card holds `/mnt/SDCARD/config.json`.
+  - Themes come from ScreenKey. The SD card holds `/mnt/SDCARD/config.json`. Keys seen so far: `defaultTheme`,
+    `deviceBl`, `deviceVolume`, `enableXIAOZHIAI`, and (read by the program, not in our file) `usbTYpe` — sic —
+    which picks `setusbconfig serial` or `setusbconfig uac1` (USB speaker, no serial port). The value for uac1
+    is unknown. See [call-control.md](call-control.md).
   - **Open question:** can a theme clock keep running on the small screen while the PC sends key pictures?
     V1 SEND_PIXMAP might allow that.
 - No command was found that runs a program. `RemoteCommandExecutor` is only the JSON method dispatcher.
