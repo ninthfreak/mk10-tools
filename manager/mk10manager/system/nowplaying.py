@@ -478,7 +478,7 @@ class NowPlayingMonitor(QObject):
         self._enabled = bool(enabled)
         self._want_art = bool(artwork)
         if was and not self._enabled:
-            self.track = Track(available=False, note="Switched off on the Device and app tab.")
+            self.track = Track(available=False, note="Now playing is switched off on the Integrations tab.")
             self.changed.emit()
         self._poke.set()
 

@@ -237,6 +237,7 @@ def rig(qapp, tmp_path, monkeypatch):
     monkeypatch.setenv("MK10_PORT", dev.port)
     monkeypatch.setenv("MK10_NO_AUDIO", "1")
     cfg = Config(path=tmp_path / "config.json")
+    cfg.settings["integrations"]["teams"] = True
     fake = FakeTeams()
     mon = TeamsMonitor(fake)
     mon.IDLE = mon.BUSY = 0.05
@@ -285,10 +286,9 @@ def test_switch_it_off_from_settings(qapp, rig):
     ctl, dev, cfg, fake = rig
     fake.join()
     assert wait_until(qapp, lambda: ctl.teams.state.in_call, 3)
-    cfg.settings["teams_enabled"] = False
-    ctl.apply_teams_settings()
+    ctl.set_integration("teams", False)
     assert wait_until(qapp, lambda: not ctl.teams.state.available, 3)
-    assert "teams_enabled" in __import__("mk10manager.controller", fromlist=["x"]).NOT_UNDOABLE_SETTINGS
+    assert "integrations" in __import__("mk10manager.controller", fromlist=["x"]).NOT_UNDOABLE_SETTINGS
 
 
 # ---------------------------------------------------------------- round 2: camera, sharing, hand, meeting
@@ -392,6 +392,7 @@ def sync_rig(qapp, tmp_path, monkeypatch):
     dev.start()
     monkeypatch.setenv("MK10_PORT", dev.port)
     cfg = Config(path=tmp_path / "config.json")
+    cfg.settings["integrations"]["teams"] = True
     fake, audio = FakeTeams(), FakeAudio()
     mon = TeamsMonitor(fake)
     mon.IDLE = mon.BUSY = 0.05

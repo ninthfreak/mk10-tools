@@ -73,9 +73,15 @@ win._select("key", 1)
 win.key_editor._add_step("hotkey")
 pump(0.3)
 win.grab().save(os.path.join(out, "3-rules.png"))
-win.bottom.setCurrentIndex(3)   # Device and app; Slack was added ahead of it
+win.bottom.setCurrentIndex(3)   # Device and app
 pump(0.3)
 win.grab().save(os.path.join(out, "4-device.png"))
+win.bottom.setCurrentIndex(2)   # Integrations: everything off, as a new setup starts
+pump(0.3)
+win.grab().save(os.path.join(out, "6-integrations-off.png"))
+win.integrations.boxes["teams"].setChecked(True)
+pump(0.3)
+win.grab().save(os.path.join(out, "7-integrations-teams.png"))
 
 from mk10manager.ui.icon_picker import IconPicker
 d = IconPicker(ctl.renderer.icons, "microphone", "#FFFFFF", "#185FA5", win)

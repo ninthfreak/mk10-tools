@@ -11,32 +11,42 @@ from ..system.teams import TeamsState, short_device_name
 
 PLACEHOLDER = re.compile(r"\{([a-zA-Z_]+)(?::([^{}]*))?\}")
 
-HELP = (
-    "{time}  current time (follows the 24-hour setting)\n"
-    "{seconds}  seconds, 00-59\n"
-    "{date}  short date, like Thu 22 Oct\n"
-    "{day}  {month}  {year}\n"
-    "{time:%H:%M:%S}  or  {date:%d/%m}  any strftime format\n"
-    "{app}  active app      {title}  active window title\n"
-    "{page}  current page name\n"
-    "{var:mode}  value of the variable named mode\n"
-    "{output}  output of this face's command\n"
-    "{out_device}  {in_device}  the speakers and microphone in use\n"
-    "{volume}  {mic_volume}  their volume, 0-100\n"
-    "{level}  {mic_level}  how loud they are right now, 0-100\n"
-    "{mute}  {mic_mute}  “muted”, or nothing when they aren't\n"
-    "{mute:Muted|Live}  your own two words instead\n"
-    "{slack_huddle}  {slack_dnd}  {slack_unread}  {slack_mentions}\n"
-    "{slack_presence}  {slack_status}  {slack_team}  {slack_user}\n"
-    "{slack_huddle:In a huddle|Free}  your own two words again\n"
-    "{track}  {artist}  {album}  {player}  what's playing now\n"
-    "{track_time}  {track_length}  how far in, and how long\n"
-    "{teams_call}  “in a call”, or nothing      {teams_mic}  “muted” / “live” in a Teams call\n"
-    "{teams_mic:Muted|Live}  your own two words\n"
-    "{teams_camera}  {teams_sharing}  {teams_hand}  {teams_meeting}  {teams_time}  (how long the call has run)\n"
-    "{teams_shared}  what Teams' sharing bar says you're sharing (“your screen”), when it says\n"
-    "{in_device:short}  {out_device:short}  just the part of the device name in brackets"
+#: (integration id, or None for the app's own, help line). placeholder_help() leaves out switched-off ones.
+HELP_LINES = (
+    (None, "{time}  current time (follows the 24-hour setting)"),
+    (None, "{seconds}  seconds, 00-59"),
+    (None, "{date}  short date, like Thu 22 Oct"),
+    (None, "{day}  {month}  {year}"),
+    (None, "{time:%H:%M:%S}  or  {date:%d/%m}  any strftime format"),
+    (None, "{app}  active app      {title}  active window title"),
+    (None, "{page}  current page name"),
+    (None, "{var:mode}  value of the variable named mode"),
+    (None, "{output}  output of this face's command"),
+    (None, "{out_device}  {in_device}  the speakers and microphone in use"),
+    (None, "{volume}  {mic_volume}  their volume, 0-100"),
+    (None, "{level}  {mic_level}  how loud they are right now, 0-100"),
+    (None, "{mute}  {mic_mute}  “muted”, or nothing when they aren't"),
+    (None, "{mute:Muted|Live}  your own two words instead"),
+    ("slack", "{slack_huddle}  {slack_dnd}  {slack_unread}  {slack_mentions}"),
+    ("slack", "{slack_presence}  {slack_status}  {slack_team}  {slack_user}"),
+    ("slack", "{slack_huddle:In a huddle|Free}  your own two words again"),
+    ("nowplaying", "{track}  {artist}  {album}  {player}  what's playing now"),
+    ("nowplaying", "{track_time}  {track_length}  how far in, and how long"),
+    ("teams", "{teams_call}  “in a call”, or nothing      {teams_mic}  “muted” / “live” in a Teams call"),
+    ("teams", "{teams_mic:Muted|Live}  your own two words"),
+    ("teams", "{teams_camera}  {teams_sharing}  {teams_hand}  {teams_meeting}  {teams_time}  (how long the call "
+              "has run)"),
+    ("teams", "{teams_shared}  what Teams' sharing bar says you're sharing (“your screen”), when it says"),
+    (None, "{in_device:short}  {out_device:short}  just the part of the device name in brackets"),
 )
+
+
+def placeholder_help(enabled: set | None = None) -> str:
+    """The placeholder list, without those of integrations that aren't in `enabled` (None: all of them)."""
+    return "\n".join(line for owner, line in HELP_LINES if owner is None or enabled is None or owner in enabled)
+
+
+HELP = placeholder_help()
 
 
 @dataclass

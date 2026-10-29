@@ -26,8 +26,6 @@ class ScreenEditor(QWidget):
         row = QHBoxLayout()
         row.addWidget(QLabel("Show"))
         self.face = QComboBox()
-        for fid, face in ctl.renderer.faces.items():
-            self.face.addItem(face.label, fid)
         row.addWidget(self.face, 1)
         lay.addLayout(row)
         self.box = QGroupBox("Options")
@@ -49,9 +47,19 @@ class ScreenEditor(QWidget):
         screen = page.setdefault("screen", {"face": "analog", "options": {}})
         self.title.setText("Small screen on “%s”" % page["name"])
         self.face.blockSignals(True)
+        self._fill_faces(screen.get("face"))
         self.face.setCurrentIndex(max(0, self.face.findData(screen.get("face"))))
         self.face.blockSignals(False)
         self._build()
+
+    def _fill_faces(self, current):
+        """Every face but those of switched-off integrations, unless this page already shows one."""
+        hidden = self.providers.get("hidden", lambda kind: set())("faces")
+        off_note = self.providers.get("off_note", lambda kind, item: "")
+        self.face.clear()
+        for fid, face in self.ctl.renderer.faces.items():
+            if fid not in hidden or fid == current:
+                self.face.addItem(face.label + off_note("faces", fid), fid)
 
     def _build(self):
         if self.form is not None:

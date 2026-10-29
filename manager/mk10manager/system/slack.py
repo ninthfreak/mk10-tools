@@ -104,7 +104,7 @@ class SlackError(Exception):
 
 
 class SlackClient:
-    """One Slack workspace. Blocking; used from the monitor's thread and the Slack tab's check button."""
+    """One Slack workspace. Blocking; used from the monitor's thread and the Slack settings' Check button."""
 
     TIMEOUT = 10
 
@@ -146,7 +146,7 @@ FRIENDLY_ERRORS = {
     "invalid_auth": "That token isn't valid. Make a new one and paste it in again.",
     "token_revoked": "That token has been revoked. Make a new one.",
     "account_inactive": "That Slack account is inactive.",
-    "missing_scope": "The token is missing a permission (scope) this needs. See the Slack tab for the list.",
+    "missing_scope": "The token is missing a permission (scope) this needs. The Slack settings on the Integrations tab list them.",
     "not_allowed_token_type": "That's the wrong kind of token: this needs a user token (xoxp-...).",
     "ratelimited": "Slack is rate-limiting us.",
 }
@@ -176,7 +176,7 @@ class SlackReader:
 
     def read(self, channels=(), unread_source="channels") -> SlackState:
         if not self.client.token:
-            return SlackState(note="No Slack token set yet. Add one on the Slack tab.")
+            return SlackState(note="No Slack token set yet. Add one on the Integrations tab.")
         try:
             me = self.identity()
         except SlackError as e:
@@ -322,7 +322,7 @@ class SlackMonitor(QObject):
         self._unread_source = unread_source or "channels"
         was, self._enabled = self._enabled, bool(enabled and token)
         if not self._enabled and was:
-            self.state = SlackState(note="Slack is switched off on the Slack tab." if not enabled
+            self.state = SlackState(note="Slack is switched off on the Integrations tab." if not enabled
                                     else "No Slack token set yet.")
             self.changed.emit()
         self._poke.set()
@@ -333,7 +333,7 @@ class SlackMonitor(QObject):
     def apply(self, mode: str, a: dict):
         """Called from the action worker thread."""
         if not self._enabled:
-            return False, "Slack isn't set up. Add a token on the Slack tab."
+            return False, "Slack is switched off, or has no token yet: see the Integrations tab."
         try:
             ok, msg = self.reader.apply(mode, a)
         except Exception as e:

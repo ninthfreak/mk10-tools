@@ -1,4 +1,4 @@
-"""Bottom tabs: context rules, variables, and device settings."""
+"""Bottom tabs: context rules, variables, Slack's settings, and device settings."""
 
 import threading
 
@@ -8,14 +8,13 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFontCom
                                QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QScrollArea, QSlider,
                                QSpinBox, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
 
+from .. import integrations
 from .. import rules as rules_mod
 from ..config import config_dir
 from ..device.manager import all_ports
 from ..system import audio as audio_mod
 from ..system import autostart, inputs
-from ..system import nowplaying as np_mod
 from ..system import slack as slack_mod
-from ..system import teams as teams_mod
 from .condition_row import ConditionRow
 
 
@@ -31,12 +30,15 @@ class RuleRow(QFrame):
     remove = Signal(object)
     move = Signal(object, int)
 
-    def __init__(self, rule: dict, pages, apps, variables, parent=None):
+    def __init__(self, rule: dict, pages, apps, variables, settings: dict | None = None, parent=None):
         super().__init__(parent)
         self.rule = rule
         lay = QHBoxLayout(self)
         lay.setContentsMargins(4, 2, 4, 2)
-        self.cond = ConditionRow(rule, {"apps": lambda: apps, "variables": lambda: variables})
+        settings = settings or {}
+        self.cond = ConditionRow(rule, {"apps": lambda: apps, "variables": lambda: variables,
+                                        "hidden": lambda kind: integrations.hidden(settings, kind),
+                                        "off_note": lambda kind, item: integrations.off_note(settings, kind, item)})
         self.cond.changed.connect(self.changed.emit)
         lay.addWidget(self.cond, 1)
         lay.addWidget(QLabel("show page"))
@@ -126,7 +128,7 @@ class RulesPanel(QWidget):
         apps = list(self.ctl.config.data.get("seen_apps", []))
         variables = sorted(self.ctl.config.variables)
         for r in self.ctl.config.rules:
-            row = RuleRow(r, self._pages(), apps, variables)
+            row = RuleRow(r, self._pages(), apps, variables, self.ctl.config.settings)
             row.changed.connect(self.changed.emit)
             row.remove.connect(self._remove)
             row.move.connect(self._move)
@@ -285,9 +287,6 @@ class SlackPanel(QWidget):
         right = QVBoxLayout()
         lay.addLayout(right, 2)
 
-        self.enabled = QCheckBox("Talk to Slack")
-        self.enabled.setChecked(bool(s.get("slack_enabled", False)))
-        left.addRow("", self.enabled)
         trow = QHBoxLayout()
         self.token = QLineEdit(slack_mod.read_token(self._folder()))
         self.token.setEchoMode(QLineEdit.Password)
@@ -332,7 +331,6 @@ class SlackPanel(QWidget):
                                "Teams and everything else."))
         right.addStretch(1)
 
-        self.enabled.toggled.connect(lambda on: self._set("slack_enabled", bool(on)))
         self.channels.textChanged.connect(lambda t: self._set("slack_channels", t.strip()))
         self.unread_source.currentIndexChanged.connect(
             lambda i: self._set("slack_unread_source", self.unread_source.itemData(i)))
@@ -394,7 +392,7 @@ class SlackPanel(QWidget):
 
     def refresh_state(self):
         st = self.ctl.slack.state
-        if not self.ctl.config.settings.get("slack_enabled"):
+        if not integrations.is_on(self.ctl.config.settings, "slack"):
             self.state_line.setText("Switched off.")
         elif st.connected:
             bits = ["in a huddle" if st.in_huddle else "no huddle", st.presence or "?"]
@@ -408,10 +406,6 @@ class SlackPanel(QWidget):
 
     def reload(self):
         s = self.ctl.config.settings
-        for w, v in ((self.enabled, s.get("slack_enabled", False)),):
-            w.blockSignals(True)
-            w.setChecked(bool(v))
-            w.blockSignals(False)
         for w, v in ((self.channels, s.get("slack_channels", "")),):
             w.blockSignals(True)
             w.setText(str(v))
@@ -491,39 +485,6 @@ class DevicePanel(QWidget):
         arow.addWidget(self.meter_fps)
         arow.addStretch(1)
         left.addRow("Sound meters", self._wrap(arow))
-        nrow = QHBoxLayout()
-        self.np_enabled = QCheckBox("Show what's playing")
-        self.np_enabled.setToolTip("Reads the system's own media info, so it works for any player: "
-                                   "Spotify, a browser tab, VLC.")
-        self.np_enabled.setChecked(bool(s.get("nowplaying_enabled", True)))
-        self.np_art = QCheckBox("Album art")
-        self.np_art.setToolTip("Some players give a web address for the artwork, so fetching it means a "
-                               "small download each time the track changes.")
-        self.np_art.setChecked(bool(s.get("nowplaying_art", True)))
-        nrow.addWidget(self.np_enabled)
-        nrow.addWidget(self.np_art)
-        nrow.addStretch(1)
-        left.addRow("Now playing", self._wrap(nrow))
-        trow = QHBoxLayout()
-        self.teams_enabled = QCheckBox("Read Teams' call and mute state")
-        self.teams_enabled.setToolTip("Reads the Teams window the way a screen reader does, so keys can show "
-                                      "whether you're in a call and muted, and mute or unmute you explicitly. "
-                                      "Windows only. Teams has to be in English.")
-        self.teams_enabled.setChecked(bool(s.get("teams_enabled", True)))
-        self.teams_status = _muted("")
-        self.teams_status.setWordWrap(True)
-        self.teams_sync = QCheckBox("Keep the PC microphone in step")
-        self.teams_sync.setToolTip("During a Teams call, muting in Teams mutes the PC microphone too, and muting "
-                                   "the PC microphone (the MK10's key, a keyboard's mic key) mutes Teams. When "
-                                   "they disagree and can't be put right, the live one is muted, never the other "
-                                   "way round. Outside a call nothing is touched.")
-        self.teams_sync.setChecked(bool(s.get("teams_sync_mic", True)))
-        trow.addWidget(self.teams_enabled)
-        trow.addWidget(self.teams_sync)
-        trow.addStretch(1)
-        left.addRow("Microsoft Teams", self._wrap(trow))
-        left.addRow("", self.teams_status)
-
         self.minimized = QCheckBox("Start hidden (in the tray)")
         self.minimized.setChecked(bool(s.get("start_minimized")))
         self.login = QCheckBox("Start when I log in")
@@ -534,10 +495,6 @@ class DevicePanel(QWidget):
         right.addWidget(_muted("Keystrokes are sent with: %s" % inputs.describe_backend()))
         right.addWidget(_muted("Sound is read and changed with: %s"
                                % audio_mod.describe_backend(getattr(ctl.audio, "backend", None))))
-        right.addWidget(_muted("What's playing is read with: %s"
-                               % np_mod.describe_backend(getattr(ctl.nowplaying, "backend", None))))
-        right.addWidget(_muted("Teams is read with: %s"
-                               % teams_mod.describe_backend(getattr(ctl.teams, "backend", None))))
         w = ctl.watcher
         detect = "Active app detection: %s" % (getattr(w, "method", "?"))
         if getattr(w, "note", ""):
@@ -569,12 +526,6 @@ class DevicePanel(QWidget):
         self.custom_font.toggled.connect(self._font_toggle)
         self.font.currentFontChanged.connect(lambda f: self.custom_font.isChecked() and
                                              self._set("font_family", f.family()))
-        self.np_enabled.toggled.connect(lambda on: self._np_setting("nowplaying_enabled", bool(on)))
-        self.np_art.toggled.connect(lambda on: self._np_setting("nowplaying_art", bool(on)))
-        self.teams_enabled.toggled.connect(self._teams_setting)
-        self.teams_sync.toggled.connect(lambda on: self._set("teams_sync_mic", bool(on)))
-        ctl.teams.changed.connect(self._show_teams)
-        self._show_teams()
         self.levels.toggled.connect(lambda on: self._audio_setting("audio_levels", bool(on)))
         self.meter_fps.valueChanged.connect(lambda v: self._audio_setting("meter_fps", int(v)))
         self.minimized.toggled.connect(lambda on: self._set("start_minimized", bool(on)))
@@ -633,38 +584,6 @@ class DevicePanel(QWidget):
         self.ctl.config.settings[key] = value
         self.changed.emit()
 
-    def _np_setting(self, key, value):
-        self.ctl.config.settings[key] = value
-        self.ctl.apply_nowplaying_settings()
-        self.ctl.nowplaying.refresh_soon()
-        self.changed.emit()
-
-    def _teams_setting(self, on):
-        self.ctl.config.settings["teams_enabled"] = bool(on)
-        self.ctl.apply_teams_settings()
-        self.ctl.teams.refresh_soon()
-        self.changed.emit()
-
-    def _show_teams(self):
-        t = self.ctl.teams.state
-        if isinstance(getattr(self.ctl.teams, "backend", None), teams_mod.NullTeams):
-            text = "Only on Windows for now. Teams for Linux has a control interface this could use later."
-        elif not t.available:
-            text = t.note or "Can't read Teams."
-        elif not t.running:
-            text = "Teams isn't open"
-        elif not t.in_call:
-            text = "Teams is open, not in a call"
-        elif t.muted is None:
-            text = "In a call; can't tell if you're muted (the button says “%s”)" % t.button_name
-        else:
-            text = "In %s: %s" % ("“%s”" % t.meeting if t.meeting else "a call", "muted" if t.muted else "live")
-            if t.camera is not None:
-                text += ", camera %s" % ("on" if t.camera else "off")
-            if t.sharing:
-                text += ", sharing %s" % t.shared if t.shared else ", sharing"
-        self.teams_status.setText(text)
-
     def _audio_setting(self, key, value):
         self.ctl.config.settings[key] = value
         self.ctl.apply_audio_settings()
@@ -683,10 +602,6 @@ class DevicePanel(QWidget):
         s = self.ctl.config.settings
         for w, v in ((self.feedback, s.get("press_feedback", True)), (self.h24, s.get("time_24h", True)),
                      (self.levels, s.get("audio_levels", True)),
-                     (self.np_enabled, s.get("nowplaying_enabled", True)),
-                     (self.np_art, s.get("nowplaying_art", True)),
-                     (self.teams_enabled, s.get("teams_enabled", True)),
-                     (self.teams_sync, s.get("teams_sync_mic", True)),
                      (self.minimized, s.get("start_minimized", False))):
             w.blockSignals(True)
             w.setChecked(bool(v))

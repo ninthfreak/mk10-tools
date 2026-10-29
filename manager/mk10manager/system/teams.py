@@ -971,7 +971,7 @@ class TeamsMonitor(QObject):
         was = self._enabled
         self._enabled = bool(enabled)
         if was and not self._enabled:
-            self.state = TeamsState(available=False, note="Switched off on the Device and app tab.")
+            self.state = TeamsState(available=False, note="Microsoft Teams is switched off on the Integrations tab.")
             self.changed.emit()
         self._poke.set()
 
@@ -984,7 +984,7 @@ class TeamsMonitor(QObject):
         if kind not in self.COMMANDS:
             return False, "Unknown Teams command %s" % kind
         if not self._enabled:
-            return False, "Reading Teams is switched off on the Device and app tab."
+            return False, "Microsoft Teams is switched off on the Integrations tab."
         if not (self._thread and self._thread.is_alive()):
             return False, "The Teams reader isn't running."
         done, result = threading.Event(), {}
@@ -1044,7 +1044,7 @@ class TeamsMonitor(QObject):
             except queue.Empty:
                 return
             try:
-                ok, message = self._do(kind) if self._enabled else (False, "Reading Teams is switched off.")
+                ok, message = self._do(kind) if self._enabled else (False, "Microsoft Teams is switched off.")
             except Exception as e:
                 ok, message = False, "Teams command failed: %s" % e
             result.update(ok=ok, message=message)

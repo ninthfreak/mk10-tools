@@ -20,6 +20,8 @@ class ConditionRow(QWidget):
         providers = providers or {}
         apps = list(providers.get("apps", lambda: [])())
         variables = list(providers.get("variables", lambda: [])())
+        hidden = providers.get("hidden", lambda kind: set())("conditions")
+        off_note = providers.get("off_note", lambda kind, item: "")
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
 
@@ -32,7 +34,9 @@ class ConditionRow(QWidget):
             lay.addWidget(QLabel(lead))
         self.when = QComboBox()
         for v, l in CONDITIONS:
-            self.when.addItem(l, v)
+            if v in hidden and v != cond.get("when"):
+                continue                      # a switched-off integration's, unless this row already uses it
+            self.when.addItem(l + off_note("conditions", v), v)
         self.when.setCurrentIndex(max(0, self.when.findData(cond.get("when", "app"))))
         lay.addWidget(self.when)
 

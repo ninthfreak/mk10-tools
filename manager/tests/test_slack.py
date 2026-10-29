@@ -173,7 +173,7 @@ def test_monitor_only_talks_to_slack_when_switched_on(qapp):
 def test_monitor_apply_reports_problems(qapp):
     fake = FakeSlack()
     mon = SlackMonitor(fake)
-    assert mon.apply("dnd", {}) == (False, "Slack isn't set up. Add a token on the Slack tab.")
+    assert mon.apply("dnd", {}) == (False, "Slack is switched off, or has no token yet: see the Integrations tab.")
     mon.configure("xoxp-x", [], 5, "channels", True)
     assert mon.apply("presence", {"presence": "away"}) == (True, "")
     assert fake.state.presence == "away"
@@ -207,7 +207,7 @@ def rig(qapp, tmp_path, monkeypatch):
     dev.start()
     monkeypatch.setenv("MK10_PORT", dev.port)
     cfg = Config(path=tmp_path / "config.json")
-    cfg.settings["slack_enabled"] = True
+    cfg.settings["integrations"]["slack"] = True
     write_token(tmp_path, "xoxp-test")
     slack = FakeSlack()
     ctl = Controller(cfg, watcher=FakeWatcher(), audio=AudioMonitor(FakeAudio()),

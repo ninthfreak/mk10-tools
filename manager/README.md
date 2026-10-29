@@ -38,9 +38,15 @@ If it won't start and mentions "xcb", install `libxcb-cursor0` (Debian, Ubuntu) 
   **Right-click** a key to copy, paste, clear or test it.
 - **Pages** are at the top. Each page has its own keys and its own small screen.
   Right-click a page to rename, duplicate, delete it, or make it the default.
-- **New page** offers ready-made templates as well as a blank one: a Sound and microphone page, a Slack
-  page and a Microsoft Teams page. You see exactly what you'd get before you add it, and a template can offer to add its own context
-  rule (the Slack one can switch to itself whenever you're in a huddle).
+- **New page** offers ready-made templates as well as a blank one: a Sound and microphone page, and a Slack
+  page and a Microsoft Teams page while those integrations are on. You see exactly what you'd get before you
+  add it, and a template can offer to add its own context rule (the Slack one can switch to itself whenever
+  you're in a huddle).
+- **Integrations** (bottom left) switch Slack, Microsoft Teams and Now playing on and off. One that's off adds
+  nothing to the window: its key steps, conditions, small-screen faces, templates, placeholders and settings
+  are hidden, and it reads nothing in the background. Keys, rules and screens that already use it are kept
+  as they are, marked "off" in the editors, and work again when it's switched back on. A new setup starts
+  with all of them off; settings from before keep on the ones your pages use.
 - **Context rules** (bottom left) switch pages for you.
   For example: when firefox is active, show the Browser page. Rules higher in the list win.
 - **Variables** are named values. A key can set one; the screen can show it with `{var:name}`;
@@ -58,8 +64,8 @@ If it won't start and mentions "xcb", install `libxcb-cursor0` (Debian, Ubuntu) 
 ### Things a key can do
 
 Keyboard shortcut, type text, media keys, mute or change the volume of the speakers or the microphone,
-Slack (status, away, snooze, post a message, jump to a channel), Microsoft Teams (mute me, unmute me, switch
-mute), open a website or file, run a command,
+Slack (status, away, snooze, post a message, jump to a channel) and Microsoft Teams (mute, camera, sharing)
+when those integrations are on, open a website or file, run a command,
 send a web request (Home Assistant and similar), change page, set a variable, show a message on the small
 screen, change brightness, wait.
 
@@ -101,7 +107,7 @@ it's using.
 - **The PC microphone follows Teams** during a call, and Teams follows the PC: mute in Teams' window and the
   microphone itself mutes; mute with a keyboard's mic key and Teams mutes. When a call starts the PC takes
   Teams' state, because that's what people see. If the two still disagree after a follow, the live side is
-  muted, never the muted side unmuted. Switch it off on the **Device and app** tab.
+  muted, never the muted side unmuted. Switch it off on the **Integrations** tab.
 - The PC side of that, and the **speakers key**, use Windows' default devices. Teams may be using others.
   Plugging in a headset mid-call (a new default microphone) never unmutes you.
 - **The camera key** turns your Teams camera on and off, in a call only.
@@ -128,7 +134,7 @@ that same button, so Teams doesn't need focus and no shortcut is sent. The appro
   `teams-tree-<time>.txt` file there. That one holds the names of the people in the meeting.
   **`teams-menu-windows.bat`** does the same after 15 seconds, so you can open a Teams menu first and it's read too.
 
-The switch is on the **Device and app** tab, with a line saying what the app sees right now.
+Switch it on or off on the **Integrations** tab, which also has a line saying what the app sees right now.
 
 ## Now playing
 
@@ -148,16 +154,17 @@ It prints exactly what your machine reports — which packages were found, the t
 whether artwork came back — and always saves the same thing to **`nowplaying-report.txt`** in the settings
 folder, so the answer isn't lost even when it's started without a console.
 
-Switches for it are on the **Device and app** tab. *Album art* is separate because some players hand over a
+Switch it on or off on the **Integrations** tab. *Album art* is separate because some players hand over a
 web address rather than a file, so fetching it means a small download each time the track changes.
 
 ## Slack
 
-The **Slack** tab connects the app to one workspace. Slack has no local control port, so this uses its Web API:
+Switch on **Slack** on the **Integrations** tab to connect the app to one workspace. Slack has no local
+control port, so this uses its Web API:
 
 1. Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From scratch**, and pick
    your workspace.
-2. Under **OAuth & Permissions**, add the **User Token Scopes** listed on the Slack tab.
+2. Under **OAuth & Permissions**, add the **User Token Scopes** listed in the Slack settings.
 3. **Install to Workspace**, copy the **User OAuth Token** (it starts with `xoxp-`), paste it in and
    press **Check**.
 

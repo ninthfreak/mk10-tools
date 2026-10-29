@@ -252,6 +252,7 @@ class Form(QWidget):
     """Builds a form for a list of Fields, editing `values` (a dict) in place. Emits changed() after edits.
 
     providers: dict with optional callables 'pages' -> [(id, name)], 'apps' -> [str], 'variables' -> [str],
+    'help' -> the help text to show for a field's (it leaves out switched-off integrations' placeholders),
     plus 'icons' (an IconLibrary) for icon fields."""
 
     changed = Signal(str)
@@ -276,7 +277,7 @@ class Form(QWidget):
             h.setContentsMargins(0, 0, 0, 0)
             h.addWidget(w, 1)
             if f.help and f.kind not in ("bool",):
-                h.addWidget(help_button(f.help))
+                h.addWidget(help_button(self.providers.get("help", lambda text: text)(f.help)))
             label = QLabel(f.label) if f.kind != "bool" else QLabel("")
             self.layout_.addRow(label, container)
             self.rows[f.key] = (label, container)

@@ -176,7 +176,7 @@ TEMPLATES = [
              "Microphone and speaker mute for huddles, a huddle indicator, snooze, away, two status keys and "
              "an unread count. The small screen shows your Slack state next to the real microphone.",
              slack_page,
-             setup=("Add a Slack token on the Slack tab, or the Slack keys won't do anything.",
+             setup=("Add a Slack token on the Integrations tab, or the Slack keys won't do anything.",
                     "Slack can't tell us whether you're muted inside a huddle, and can't start or join one. "
                     "The microphone key mutes the microphone itself, which works everywhere.")),
     Template("teams", "Microsoft Teams",
@@ -187,7 +187,7 @@ TEMPLATES = [
              setup=("Windows only, and Teams has to be in English: the keys read Teams' window the way a screen "
                     "reader does.",
                     "In a call the microphone key is Teams' mute and the PC microphone follows it (switch that off "
-                    "on the Device and app tab). Outside a call it mutes the PC microphone.",
+                    "on the Integrations tab). Outside a call it mutes the PC microphone.",
                     "The camera and share keys only work in a call. The share key stops sharing (a screen, a "
                     "window, a whiteboard or an Excel sheet). When you aren't sharing it opens Teams' share "
                     "picker: what to share is chosen there.",

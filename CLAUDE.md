@@ -121,6 +121,11 @@ editor forms through `schema.Field`. `render/meters.py` draws level meters behin
 `parec` on Linux) on its own thread; live levels are only measured while a page on screen shows one.
 `conditions.py` holds the one condition evaluator, shared by context rules (which switch pages) and key *states*
 (which repaint a key while something is true — that's what makes a mute key show the real mute state).
+`integrations.py` is the registry of optional app integrations (Slack, Teams, Now playing): which action types,
+conditions, faces, templates and placeholders each adds. One that's switched off (`settings["integrations"]`, the
+Integrations tab, `controller.set_integration`) is hidden from every editor and its monitor stops; what already
+uses it is kept and marked "off". **A new integration gets an entry there**, a monitor with `configure(enabled,
+...)` called from the controller's `apply_*_settings`, and its settings widget in `ui/integrations_panel.py`.
 `system/slack.py` is the Slack Web API client and its polling monitor; the token lives in its own 0600 file in
 the settings folder, never in `config.json`. `system/nowplaying.py` reads whatever the system says is playing
 (SMTC through PyWinRT on Windows — optional packages, absent means the feature is simply empty; MPRIS through
