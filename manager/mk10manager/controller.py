@@ -29,8 +29,7 @@ NOT_UNDOABLE = ("variables", "seen_apps")
 NOT_UNDOABLE_SETTINGS = ("brightness", "port", "press_feedback", "time_24h", "font_family", "start_minimized",
                          "tray_hint_shown", "audio_levels", "meter_fps", "slack_enabled", "slack_team_id",
                          "slack_channels", "slack_unread_source", "slack_poll_seconds",
-                         "nowplaying_enabled", "nowplaying_art", "teams_enabled", "teams_sync_mic",
-                         "teams_follow_devices")
+                         "nowplaying_enabled", "nowplaying_art", "teams_enabled", "teams_sync_mic")
 SLOW_TICK_MS = 200          # how often we look at the clock and the message timer when nothing is animating
 _NO_RESULT = object()
 
@@ -291,29 +290,19 @@ class Controller(QObject):
 
     def _on_teams(self):
         self._dirty = True
-        self._follow_teams_devices()
         self._sync_mic()
         self._evaluate_rules()
-
-    def _follow_teams_devices(self):
-        """During a call, 'the speakers' and 'the microphone' are the ones Teams is using, not the defaults."""
-        follow = self.teams.state.in_call and bool(self.config.settings.get("teams_follow_devices", True))
-        follow_app = getattr(self.audio, "follow_app", None)
-        if follow_app is not None:
-            follow_app("teams" if follow else None)
 
     def _sync_mic(self):
         """During a Teams call, keep the PC microphone's mute and Teams' mute the same (see micsync.py)."""
         if not self.config.settings.get("teams_sync_mic", True):
             self.micsync.reset()
             return
-        if getattr(self.audio, "follow_settling", False):
-            return                      # 'the microphone' is about to become Teams' own: wait for it
         audio = self.audio.state
         device = audio.input.name if audio.available else None
         if device != self._sync_device:
-            # Another microphone (following Teams' devices, or a new default) isn't the PC changing its mute: the
-            # PC side starts again by following Teams, so the switch can never unmute anyone.
+            # A new default microphone (a headset plugged in mid-call) isn't the PC changing its mute: the PC
+            # side starts again by following Teams, so the switch can never unmute anyone.
             self._sync_device = device
             self.micsync.reset()
         pc_muted = audio.input.muted if audio.available else None
@@ -577,7 +566,6 @@ class Controller(QObject):
 
     def apply_teams_settings(self):
         self.teams.configure(bool(self.config.settings.get("teams_enabled", True)))
-        self._follow_teams_devices()
 
     def apply_audio_settings(self):
         """Called when the live-meter switch or the meter speed changes on the Device tab."""

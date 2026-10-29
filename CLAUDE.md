@@ -60,7 +60,8 @@ format, `docs/call-control.md` for the USB headset test, and `docs/research-note
     `qemu-arm-static -L <device /lib> -0 sh busybox -n script.sh`.
 - **Teams:** `manager/teams-windows.bat` (double-click, during a call), `run-windows.bat teams` prints what UI
   Automation sees in Teams (the `microphone-button`, its name, every button in the call window, the call clock,
-  the video tiles, audio sessions per device) and saves `teams-report.txt`. Read-only. Use it first when the Teams keys stop following Teams.
+  the video tiles) and saves `teams-report.txt`, plus the whole tree. `teams-menu-windows.bat` waits 15 s first,
+  so a Teams menu can be opened and captured. Read-only. Use it first when the Teams keys stop following Teams.
 - **What's playing:** `manager/nowplaying-windows.bat` (double-click), `run-windows.bat nowplaying` or
   `./run-linux.sh nowplaying` prints what this PC reports (packages found, track, position, artwork) and
   saves it to `nowplaying-report.txt` in the settings folder. Use it rather than guessing when the Now
@@ -95,6 +96,9 @@ format, `docs/call-control.md` for the USB headset test, and `docs/research-note
 
 - They assess risk and tradeoffs themselves. Give accurate feasibility reads, including for hard or dead-end paths.
   Don't steer toward easier options or soften difficulty.
+- **Don't infer or divine data.** Show only what can be acquired directly from its source (for Teams: what Teams
+  itself displays). If it can't be, say so and discuss possible methods with the user before building any.
+  Names must match what the source shows: a device name from Windows that Teams doesn't display only confuses.
 - Rate **difficulty (x/5)** and **confidence** explicitly. Present recommendations as recommendations, not decisions.
   Keep uncertainty visible.
 - Keep text short and skimmable: short sentences, headers, lists.
@@ -123,11 +127,9 @@ the settings folder, never in `config.json`. `system/nowplaying.py` reads whatev
 `playerctl` on Linux) and caches the album art. `system/teams.py` reads Teams' in-call mic button through UI
 Automation (ctypes, vtable slots checked against Wine's IDL; the contract is from shuush) on its own thread, and
 does the explicit mute and camera on/off there too: read, press only if needed, read again to confirm.
-During a call `AudioMonitor.follow_app("teams")` swaps the default devices for the ones Teams streams to (Windows
-audio sessions by process family).
 `micsync.py` decides how the PC microphone and Teams' mute follow each other during a call (the controller
-carries it out); its rule is that a disagreement is settled by muting the live side, never by unmuting. A change
-of microphone restarts it, so following Teams' devices can never unmute anyone. `templates.py` builds ready-made pages for the New page window.
+carries it out); its rule is that a disagreement is settled by muting the live side, never by unmuting. A new
+default microphone restarts it, so plugging in a headset mid-call can never unmute anyone. `templates.py` builds ready-made pages for the New page window.
 `controller.py` is the hub. It owns pages, presses, rules (edge-triggered: they act only when the result changes),
 variables, debounced saving and undo snapshots (device settings are kept out of undo).
 `actions.py` runs key actions on a worker thread; actions that touch the app (page, variable, message, brightness,

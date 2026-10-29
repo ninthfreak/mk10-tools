@@ -588,8 +588,9 @@ class TeamsFace(SlackFace):
         Field("text_size", "Text size", "int", 26, minimum=10, maximum=60),
         Field("accent", "Highlight colour", "color", BLUE),
         Field("busy_color", "Colour when muted, sharing or hand up", "color", ORANGE),
-        Field("show_devices", "Name the microphone, speakers and camera", "bool", False,
-              help="The keys on the Teams page already name them."),
+        Field("show_devices", "Name Windows' microphone and speakers", "bool", False,
+              help="Windows' default devices: the ones the PC microphone and speaker keys mute. Teams may be "
+                   "using others, and doesn't show which during a call."),
         Field("row_px", "Row text size", "int", 21, minimum=12, maximum=30),
     ]
 
@@ -641,10 +642,7 @@ class TeamsFace(SlackFace):
             rows.append(("OUT", words or "On", busy if out.muted else accent, bool(out.muted)))
         if in_call:
             if teams.camera is not None:
-                words = "On" if teams.camera else "Off"
-                if v["show_devices"] and teams.camera_device:
-                    words += " · " + teams.camera_device
-                rows.append(("CAMERA", words, accent if teams.camera else GREY, False))
+                rows.append(("CAMERA", "On" if teams.camera else "Off", accent if teams.camera else GREY, False))
             if teams.sharing is not None:
                 what = (teams.shared[:1].upper() + teams.shared[1:]) if teams.shared else "Yes"
                 rows.append(("SHARING", what if teams.sharing else "No", busy if teams.sharing else GREY,

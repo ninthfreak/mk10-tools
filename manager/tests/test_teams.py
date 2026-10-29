@@ -20,7 +20,7 @@ from mk10manager.system.teams import (MIC_BUTTON, TeamsMonitor, TeamsState, meet
                                       parse_mic_name, parse_pressed, parse_share_name, short_device_name)
 from mk10manager import micsync
 from mk10manager.micsync import MicSync
-from fake_audio import FakeAudio, MultiDeviceAudio
+from fake_audio import FakeAudio
 
 
 class FakeWatcher(QObject):
@@ -218,16 +218,15 @@ def test_action_summary_and_template():
     audio = AudioState(Endpoint("Headphones (Jabra Evolve2 65)", False, 50), Endpoint("Microphone (Realtek(R) Audio)",
                                                                                       False, 50), True)
     look = lambda key, st, a=audio: conditions.resolve_key(key, RenderContext(teams=st, audio=a))
-    assert expand(look(mic, TeamsState())["label"], RenderContext(audio=audio)) == "Realtek(R) Audio"
+    assert look(mic, TeamsState())["label"] == "Mic", "no device names Teams doesn't show"
+    assert look(sound, TeamsState())["label"] == "Speakers"
     assert look(mic, in_call(muted=True))["bg"] == templates.ORANGE
     assert look(mic, in_call(muted=False))["bg"] == templates.BLUE
     pc_muted = AudioState(audio.output, Endpoint(audio.input.name, True, 50), True)
     assert look(mic, TeamsState(), pc_muted)["bg"] == templates.ORANGE, "outside a call it shows the PC microphone"
-    on = replace(in_call(), camera=True, camera_device="Logitech Webcam C270")
-    assert look(camera, on)["bg"] == templates.BLUE
-    assert expand(look(camera, on)["label"], RenderContext(teams=on)) == "Logitech Webcam C270"
+    on = replace(in_call(), camera=True)
+    assert look(camera, on)["bg"] == templates.BLUE and look(camera, on)["label"] == "Camera"
     assert look(camera, replace(on, camera=False))["bg"] == templates.DARK
-    assert expand(look(camera, TeamsState())["label"], RenderContext()) == "Camera", "no device known: just Camera"
 
 
 # ---------------------------------------------------------------- end to end
@@ -482,15 +481,6 @@ def test_what_is_shared_and_the_hand_on_my_tile():
     assert teams_mod.hand_from_tile("Doe, Jane, Hand raised position 2") is None, "someone else's tile"
 
 
-def test_the_camera_teams_saved():
-    # cmd_settings.json, as read on the work PC (the backslashes are JSON-escaped in the file)
-    text = r'{"Camera": "\\\\?\\usb#vid_046d&pid_0825&mi_00#6&ebf4f56&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\\global"}'
-    path = teams_mod.camera_setting(text)
-    assert path.startswith("\\\\?\\usb#vid_046d")
-    assert teams_mod.instance_id(path) == "usb\\vid_046d&pid_0825&mi_00\\6&ebf4f56&0&0000"
-    assert teams_mod.camera_setting("{}") == "" and teams_mod.instance_id("") == ""
-
-
 def test_the_call_clock_is_teams_own(qapp, mon):
     m, fake = mon
     fake.join(elapsed=274)              # the Manager starts (or notices the call) 4.5 minutes in
@@ -510,11 +500,25 @@ def test_the_share_key_stops_sharing_or_opens_the_picker(qapp, mon):
     with fake.lock:
         fake.sharing = True
     assert m.command("share_toggle") == (True, "")
-    assert not fake.sharing and fake.presses == ["share"] and fake.focused == []
+    assert not fake.sharing and fake.presses == ["stop_share"] and fake.focused == []
     assert m.command("share_stop") == (True, "already")
     assert m.command("share_toggle") == (True, "Teams' share picker is open")
     assert fake.focused == ["share"], "opening the picker brings the call window forward"
     assert not fake.sharing, "nothing is shared until it's picked in Teams"
+
+
+def test_a_whiteboard_or_excel_share_counts_and_stops(qapp, mon):
+    m, fake = mon
+    fake.join()
+    with fake.lock:
+        fake.content = True             # Teams shows a Stop sharing button of its own; share-button says Share
+    assert wait_until(qapp, lambda: m.state.sharing is True, 2)
+    assert m.state.shared == "", "Teams' sharing bar isn't there, so what's shared is unknown"
+    share = templates.build("teams").keys[3]
+    ctx = RenderContext(teams=m.state)
+    assert expand(conditions.resolve_key(share, ctx)["label"], ctx).strip() == "Sharing"
+    assert m.command("share_stop") == (True, "")
+    assert not fake.content and fake.presses == ["stop_share"]
 
 
 def test_sharing_shows_what_is_shared(qapp, mon):
@@ -539,11 +543,14 @@ def test_sharing_shows_what_is_shared(qapp, mon):
     assert actions.summary({"type": "teams", "mode": "share_stop"}) == "Teams: stop sharing"
 
 
+def test_stop_sharing_buttons():
+    assert teams_mod.is_stop_sharing("Stop sharing") and teams_mod.is_stop_sharing("Stop Sharing")
+    assert not teams_mod.is_stop_sharing("Share") and not teams_mod.is_stop_sharing("Sharing control bar")
+
+
 def test_more_placeholders_round_3():
-    st = replace(in_call(), sharing=True, shared="", camera_device="Integrated Webcam")
+    st = replace(in_call(), sharing=True, shared="")
     assert expand("{teams_shared:something}", RenderContext(teams=st)) == "something", "sharing, but not what"
-    assert expand("{teams_camera_device:Camera}", RenderContext(teams=st)) == "Integrated Webcam"
-    assert expand("{teams_camera_device:Camera}", RenderContext()) == "Camera"
 
 
 def test_the_teams_screen_says_what_is_shared(qapp):
@@ -551,78 +558,20 @@ def test_the_teams_screen_says_what_is_shared(qapp):
     from PySide6.QtGui import QImage, QPainter
     from mk10manager.render.canvas import Renderer
     face = Renderer().face("teams")
-    st = replace(in_call(), camera=True, sharing=True, shared="your screen", camera_device="Integrated Webcam")
+    st = replace(in_call(), camera=True, sharing=True, shared="your screen")
     img = QImage(240, 296, QImage.Format_RGB32)
     p = QPainter(img)
     face.paint(p, QRectF(0, 0, 240, 296), {"show_devices": True}, RenderContext(teams=st))
     p.end()
 
 
-# ---- following the devices Teams uses
-def test_the_audio_monitor_follows_an_apps_devices(qapp):
-    audio = MultiDeviceAudio()
-    am = AudioMonitor(audio)
-    am.SLOW = am.FAST = 0.05
-    am.FOLLOW_SECONDS = 0.1
-    am.start()
-    try:
-        assert wait_until(qapp, lambda: am.state.input.name.startswith("Microphone (Realtek"), 2)
-        audio.streams["teams"] = {OUTPUT: "hp", INPUT: "hs"}
-        am.follow_app("teams")
-        assert wait_until(qapp, lambda: am.state.input.name.startswith("Headset Microphone"), 2)
-        assert am.state.output.name.startswith("Headphones") and am.following
-        audio.streams["teams"] = {OUTPUT: "hp", INPUT: None}       # stops recording for a moment
-        time.sleep(0.4)
-        assert am.state.input.name.startswith("Headset Microphone"), "keeps the last one it used"
-        am.follow_app(None)
-        assert wait_until(qapp, lambda: am.state.input.name.startswith("Microphone (Realtek"), 2)
-        assert am.state.output.name.startswith("Speakers") and not am.following
-    finally:
-        am.stop()
-
-
-@pytest.fixture
-def follow_rig(qapp, tmp_path, monkeypatch):
-    dev = FakeMK10("v2")
-    dev.start()
-    monkeypatch.setenv("MK10_PORT", dev.port)
-    cfg = Config(path=tmp_path / "config.json")
-    fake, audio = FakeTeams(), MultiDeviceAudio()
-    mon = TeamsMonitor(fake)
-    mon.IDLE = mon.BUSY = 0.05
-    mon.CONFIRM_SECONDS = 0.5
-    am = AudioMonitor(audio)
-    am.SLOW = am.FAST = 0.05
-    am.FOLLOW_SECONDS = 0.1
-    ctl = Controller(cfg, watcher=FakeWatcher(), audio=am, teams=mon)
-    ctl.micsync.PENDING_SECONDS = 0.6
-    ctl.start()
-    assert wait_until(qapp, lambda: ctl.device.is_connected, 5), ctl.device.status
-    yield ctl, fake, audio
-    ctl.shutdown()
-    dev.unplug()
-
-
-def test_in_a_call_the_keys_use_teams_devices_and_switching_never_unmutes(qapp, follow_rig):
-    ctl, fake, audio = follow_rig
-    # Windows' default microphone is muted; Teams uses the headset, which isn't. Teams has you muted.
-    audio.streams["teams"] = {OUTPUT: "hp", INPUT: "hs"}
+def test_a_new_default_microphone_mid_call_never_unmutes_teams(qapp, sync_rig):
+    ctl, fake, audio = sync_rig
     fake.join(muted=True)
-    assert wait_until(qapp, lambda: ctl.audio.state.input.name.startswith("Headset"), 3)
-    assert wait_until(qapp, lambda: audio.muted("hs"), 3), "the headset follows Teams: muted"
-    time.sleep(0.8)
-    assert fake.presses == [] and fake.muted, "the switch to the headset never unmuted Teams"
-    assert audio.muted("mic"), "the default microphone wasn't touched"
-    fake.leave()
-    assert wait_until(qapp, lambda: ctl.audio.state.input.name.startswith("Microphone (Realtek"), 3)
-
-
-def test_following_teams_devices_can_be_switched_off(qapp, follow_rig):
-    ctl, fake, audio = follow_rig
-    ctl.config.settings["teams_follow_devices"] = False
-    ctl.apply_teams_settings()
-    audio.streams["teams"] = {OUTPUT: "hp", INPUT: "hs"}
-    fake.join(muted=True)
-    assert wait_until(qapp, lambda: ctl.teams.state.in_call, 3)
+    assert wait_until(qapp, lambda: audio.sides[INPUT].muted is True, 4), "the PC follows Teams: muted"
+    time.sleep(0.3)
+    with audio.lock:                    # a headset plugged in: Windows makes it the default, and it's live
+        audio.sides[INPUT] = Endpoint("Headset Microphone (Jabra)", False, 80, 0.0)
+    assert wait_until(qapp, lambda: audio.sides[INPUT].muted is True, 4), "the new microphone follows Teams"
     time.sleep(0.5)
-    assert ctl.audio.state.input.name.startswith("Microphone (Realtek")
+    assert fake.muted and fake.presses == [], "a new microphone isn't the PC unmuting: Teams stays muted"

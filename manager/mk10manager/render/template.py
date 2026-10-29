@@ -34,7 +34,7 @@ HELP = (
     "{teams_call}  “in a call”, or nothing      {teams_mic}  “muted” / “live” in a Teams call\n"
     "{teams_mic:Muted|Live}  your own two words\n"
     "{teams_camera}  {teams_sharing}  {teams_hand}  {teams_meeting}  {teams_time}  (how long the call has run)\n"
-    "{teams_shared}  what you're sharing (“your screen”)   {teams_camera_device:Camera}  Teams' camera, or your word\n"
+    "{teams_shared}  what Teams' sharing bar says you're sharing (“your screen”), when it says\n"
     "{in_device:short}  {out_device:short}  just the part of the device name in brackets"
 )
 
@@ -125,10 +125,7 @@ TEAMS_WORDS = {"teams_mic": ("muted", "muted", "live"), "teams_camera": ("camera
 
 
 def _teams(name: str, arg, t: TeamsState) -> str:
-    in_call = t.available and t.in_call
-    if name == "teams_camera_device":
-        return (t.camera_device if in_call else "") or (arg or "").strip()
-    if not in_call:
+    if not t.available or not t.in_call:
         return ""
     if name == "teams_shared":
         return (t.shared or (arg or "").strip()) if t.sharing else ""
