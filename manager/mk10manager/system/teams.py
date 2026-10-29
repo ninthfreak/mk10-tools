@@ -395,6 +395,7 @@ def report(reads: int = 3, gap: float = 1.0) -> str:
     """Everything that matters when the Teams keys look wrong: what the reader sees, and what Teams exposes."""
     backend = make_backend()
     lines = ["MK10 Manager: what Teams looks like from here", "Reader: %s" % describe_backend(backend), ""]
+    seen_call = False
     try:
         for i in range(reads):
             if i:
@@ -406,12 +407,14 @@ def report(reads: int = 3, gap: float = 1.0) -> str:
                 lines.append("Read %d: %s" % (i + 1, "Teams is running, not in a call" if s.running
                                               else "no Teams window found"))
             else:
+                seen_call = True
                 lines.append("Read %d: in a call, %s (button name %r)" % (
                     i + 1, {True: "muted", False: "live", None: "mute state UNKNOWN"}[s.muted], s.button_name))
         if hasattr(backend, "describe"):
             lines.append("")
             lines.extend(backend.describe())
-        lines += ["", "Nothing was pressed or changed. Run this during a Teams call to see the mic button."]
+        lines += ["", "Nothing was pressed or changed." if seen_call else
+                  "Nothing was pressed or changed. Run this during a Teams call to see the mic button."]
     finally:
         backend.close()
     return "\n".join(lines)
