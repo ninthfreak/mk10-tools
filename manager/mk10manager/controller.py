@@ -30,7 +30,7 @@ NOT_UNDOABLE = ("variables", "seen_apps")
 NOT_UNDOABLE_SETTINGS = ("brightness", "port", "press_feedback", "time_24h", "font_family", "start_minimized",
                          "tray_hint_shown", "audio_levels", "meter_fps", "integrations", "slack_team_id",
                          "slack_channels", "slack_unread_source", "slack_poll_seconds",
-                         "nowplaying_art", "teams_sync_mic")
+                         "nowplaying_enabled", "nowplaying_art", "teams_sync_mic")
 SLOW_TICK_MS = 200          # how often we look at the clock and the message timer when nothing is animating
 _NO_RESULT = object()
 
@@ -563,7 +563,7 @@ class Controller(QObject):
 
     def apply_nowplaying_settings(self):
         s = self.config.settings
-        self.nowplaying.configure(integrations.is_on(s, "nowplaying"), bool(s.get("nowplaying_art", True)))
+        self.nowplaying.configure(bool(s.get("nowplaying_enabled", True)), bool(s.get("nowplaying_art", True)))
 
     def apply_teams_settings(self):
         self.teams.configure(integrations.is_on(self.config.settings, "teams"))
@@ -576,7 +576,6 @@ class Controller(QObject):
             return
         switches[integration_id] = bool(on)
         self.apply_slack_settings()
-        self.apply_nowplaying_settings()
         self.apply_teams_settings()
         self._dirty = True
         self.integrations_changed.emit()

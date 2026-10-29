@@ -1,4 +1,7 @@
-"""Optional integrations with other apps, each switched on and off on the Integrations tab.
+"""Optional integrations with specific apps (Slack, Teams), each switched on and off on the Integrations tab.
+
+What the operating system itself provides (sound, what's playing, the active window) is the app's own, not an
+integration: it's always there.
 
 One that's off adds nothing to the window: its key steps, conditions, small-screen faces, page templates and
 placeholders are hidden, its settings fold away, and its monitor stops reading. Keys, rules and screens that
@@ -44,16 +47,10 @@ INTEGRATIONS = (
                 actions=("teams",),
                 conditions=("teams_call", "teams_muted", "teams_camera", "teams_sharing", "teams_hand"),
                 faces=("teams",), templates=("teams",), placeholders=("teams_",)),
-    Integration("nowplaying", "Now playing",
-                "What music or video is playing, from any player that tells the system: title, artist, "
-                "artwork and progress.",
-                conditions=("playing",), faces=("nowplaying",),
-                placeholders=("track", "artist", "album", "player", "track_time", "track_length",
-                              "track_status")),
 )
 BY_ID = {i.id: i for i in INTEGRATIONS}
 #: The per-integration switches these replaced (they lived on the Slack and Device and app tabs).
-OLD_SWITCHES = ("slack_enabled", "teams_enabled", "nowplaying_enabled")
+OLD_SWITCHES = ("slack_enabled", "teams_enabled")
 _PLACEHOLDER = re.compile(r"\{([a-zA-Z_]+)(?::[^{}]*)?\}")
 
 

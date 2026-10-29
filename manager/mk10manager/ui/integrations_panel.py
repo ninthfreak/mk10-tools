@@ -8,7 +8,6 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QCheckBox, QFrame, QGroupBox, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from .. import integrations
-from ..system import nowplaying as np_mod
 from ..system import teams as teams_mod
 from .panels import SlackPanel
 
@@ -75,35 +74,6 @@ class TeamsSettings(QWidget):
         self.show_state()
 
 
-class NowPlayingSettings(QWidget):
-    changed = Signal()
-
-    def __init__(self, ctl, parent=None):
-        super().__init__(parent)
-        self.ctl = ctl
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        self.art = QCheckBox("Album art")
-        self.art.setToolTip("Some players give a web address for the artwork, so fetching it means a small "
-                            "download each time the track changes.")
-        lay.addWidget(self.art)
-        lay.addWidget(_muted("Read with: %s"
-                             % np_mod.describe_backend(getattr(ctl.nowplaying, "backend", None))))
-        self.art.toggled.connect(self._art)
-        self.reload()
-
-    def _art(self, on):
-        self.ctl.config.settings["nowplaying_art"] = bool(on)
-        self.ctl.apply_nowplaying_settings()
-        self.ctl.nowplaying.refresh_soon()
-        self.changed.emit()
-
-    def reload(self):
-        self.art.blockSignals(True)
-        self.art.setChecked(bool(self.ctl.config.settings.get("nowplaying_art", True)))
-        self.art.blockSignals(False)
-
-
 class IntegrationsPanel(QWidget):
     changed = Signal()
 
@@ -122,8 +92,7 @@ class IntegrationsPanel(QWidget):
         lay.addWidget(_muted("Switch on the apps you use. One that's off adds nothing to the window and reads "
                              "nothing in the background. Keys that use it are kept: they do nothing until it's "
                              "back on."))
-        self.settings_widgets = {"slack": SlackPanel(ctl), "teams": TeamsSettings(ctl),
-                                 "nowplaying": NowPlayingSettings(ctl)}
+        self.settings_widgets = {"slack": SlackPanel(ctl), "teams": TeamsSettings(ctl)}
         self.boxes, self.usage = {}, {}
         for integ in integrations.INTEGRATIONS:
             box = QGroupBox(integ.name)

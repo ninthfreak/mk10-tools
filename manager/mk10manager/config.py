@@ -32,6 +32,7 @@ DEFAULT_SETTINGS = {
     "slack_channels": "",          # conversation ids to count unread messages in
     "slack_unread_source": "channels",
     "slack_poll_seconds": 10,
+    "nowplaying_enabled": True,    # read what the system says is playing
     "nowplaying_art": True,        # fetch the album art too (a download, for players that give a URL)
     "teams_sync_mic": True,        # during a Teams call, keep the PC microphone's mute the same as Teams'
 }
@@ -205,6 +206,8 @@ class Config:
         s = d.setdefault("settings", {})
         if not isinstance(s.get("integrations"), dict):
             s["integrations"] = integrations.initial_switches(d)
+        for gone in set(s["integrations"]) - set(integrations.BY_ID):
+            del s["integrations"][gone]                 # Now playing was one, briefly
         for old in integrations.OLD_SWITCHES:
             s.pop(old, None)
         for k, v in DEFAULT_SETTINGS.items():

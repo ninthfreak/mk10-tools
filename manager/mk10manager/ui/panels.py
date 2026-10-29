@@ -14,6 +14,7 @@ from ..config import config_dir
 from ..device.manager import all_ports
 from ..system import audio as audio_mod
 from ..system import autostart, inputs
+from ..system import nowplaying as np_mod
 from ..system import slack as slack_mod
 from .condition_row import ConditionRow
 
@@ -485,6 +486,19 @@ class DevicePanel(QWidget):
         arow.addWidget(self.meter_fps)
         arow.addStretch(1)
         left.addRow("Sound meters", self._wrap(arow))
+        nrow = QHBoxLayout()
+        self.np_enabled = QCheckBox("Show what's playing")
+        self.np_enabled.setToolTip("Reads the system's own media info, so it works for any player: "
+                                   "Spotify, a browser tab, VLC.")
+        self.np_enabled.setChecked(bool(s.get("nowplaying_enabled", True)))
+        self.np_art = QCheckBox("Album art")
+        self.np_art.setToolTip("Some players give a web address for the artwork, so fetching it means a "
+                               "small download each time the track changes.")
+        self.np_art.setChecked(bool(s.get("nowplaying_art", True)))
+        nrow.addWidget(self.np_enabled)
+        nrow.addWidget(self.np_art)
+        nrow.addStretch(1)
+        left.addRow("Now playing", self._wrap(nrow))
         self.minimized = QCheckBox("Start hidden (in the tray)")
         self.minimized.setChecked(bool(s.get("start_minimized")))
         self.login = QCheckBox("Start when I log in")
@@ -495,6 +509,8 @@ class DevicePanel(QWidget):
         right.addWidget(_muted("Keystrokes are sent with: %s" % inputs.describe_backend()))
         right.addWidget(_muted("Sound is read and changed with: %s"
                                % audio_mod.describe_backend(getattr(ctl.audio, "backend", None))))
+        right.addWidget(_muted("What's playing is read with: %s"
+                               % np_mod.describe_backend(getattr(ctl.nowplaying, "backend", None))))
         w = ctl.watcher
         detect = "Active app detection: %s" % (getattr(w, "method", "?"))
         if getattr(w, "note", ""):
@@ -526,6 +542,8 @@ class DevicePanel(QWidget):
         self.custom_font.toggled.connect(self._font_toggle)
         self.font.currentFontChanged.connect(lambda f: self.custom_font.isChecked() and
                                              self._set("font_family", f.family()))
+        self.np_enabled.toggled.connect(lambda on: self._np_setting("nowplaying_enabled", bool(on)))
+        self.np_art.toggled.connect(lambda on: self._np_setting("nowplaying_art", bool(on)))
         self.levels.toggled.connect(lambda on: self._audio_setting("audio_levels", bool(on)))
         self.meter_fps.valueChanged.connect(lambda v: self._audio_setting("meter_fps", int(v)))
         self.minimized.toggled.connect(lambda on: self._set("start_minimized", bool(on)))
@@ -584,6 +602,12 @@ class DevicePanel(QWidget):
         self.ctl.config.settings[key] = value
         self.changed.emit()
 
+    def _np_setting(self, key, value):
+        self.ctl.config.settings[key] = value
+        self.ctl.apply_nowplaying_settings()
+        self.ctl.nowplaying.refresh_soon()
+        self.changed.emit()
+
     def _audio_setting(self, key, value):
         self.ctl.config.settings[key] = value
         self.ctl.apply_audio_settings()
@@ -602,6 +626,8 @@ class DevicePanel(QWidget):
         s = self.ctl.config.settings
         for w, v in ((self.feedback, s.get("press_feedback", True)), (self.h24, s.get("time_24h", True)),
                      (self.levels, s.get("audio_levels", True)),
+                     (self.np_enabled, s.get("nowplaying_enabled", True)),
+                     (self.np_art, s.get("nowplaying_art", True)),
                      (self.minimized, s.get("start_minimized", False))):
             w.blockSignals(True)
             w.setChecked(bool(v))

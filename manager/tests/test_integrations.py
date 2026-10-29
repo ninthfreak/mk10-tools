@@ -1,4 +1,5 @@
-"""Integrations (Slack, Teams, Now playing) can be switched off, and then add nothing to the window."""
+"""Integrations (Slack, Teams) can be switched off, and then add nothing to the window. What the system itself
+provides (sound, what's playing) is the app's own and always there."""
 
 import copy
 
@@ -53,7 +54,8 @@ def test_hidden_parts_and_notes():
     settings = {"integrations": {"teams": True}}
     assert "slack" in integrations.hidden(settings, "actions")
     assert "teams" not in integrations.hidden(settings, "actions")
-    assert {"playing", "slack_dnd"} <= integrations.hidden(settings, "conditions")
+    assert "slack_dnd" in integrations.hidden(settings, "conditions")
+    assert "playing" not in integrations.hidden({}, "conditions"), "what's playing is the system's, never hidden"
     assert integrations.hidden(settings, "templates") == {"slack"}
     assert integrations.off_note(settings, "faces", "slack") == "  (Slack is off)"
     assert integrations.off_note(settings, "faces", "teams") == ""
@@ -64,7 +66,8 @@ def test_hidden_parts_and_notes():
 def test_placeholder_help_leaves_out_switched_off_integrations():
     help_text = text_template.placeholder_help({"teams"})
     assert "{teams_call}" in help_text and "{time}" in help_text
-    assert "{slack_huddle}" not in help_text and "{track}" not in help_text
+    assert "{slack_huddle}" not in help_text
+    assert "{track}" in text_template.placeholder_help(set()), "what's playing is always there"
     assert text_template.HELP == text_template.placeholder_help(None)
 
 
@@ -79,29 +82,39 @@ def test_usage_counts_keys_screens_and_rules():
     assert integrations.describe_usage(counts) == "Used by 3 keys, 1 small screen and 1 context rule."
     assert integrations.usage(data, integrations.BY_ID["slack"]) == {"keys": 0, "screens": 0, "rules": 0}
     assert integrations.describe_usage({"keys": 0, "screens": 0, "rules": 0}) == "Nothing on your pages uses it."
-    data["pages"][0]["keys"][0]["label"] = "{track}"           # a placeholder counts too
-    assert integrations.usage(data, integrations.BY_ID["nowplaying"])["keys"] == 1
+    data["pages"][0]["keys"][0]["label"] = "{slack_unread}"    # a placeholder counts too
+    assert integrations.usage(data, integrations.BY_ID["slack"])["keys"] == 1
 
 
 # ---------------------------------------------------------------- settings from before
 def test_a_new_setup_starts_with_every_integration_off():
-    assert Config().settings["integrations"] == {"slack": False, "teams": False, "nowplaying": False}
+    assert Config().settings["integrations"] == {"slack": False, "teams": False}
 
 
 def test_old_settings_keep_what_they_use():
     data = Config().data
     del data["settings"]["integrations"]
-    data["settings"].update(slack_enabled=True, teams_enabled=True, nowplaying_enabled=True)
-    page = templates.build("teams")
-    data["pages"].append({"id": "t", "name": "Teams", "keys": page.keys, "screen": page.screen})
+    data["settings"].update(slack_enabled=True, teams_enabled=True)
     cfg = Config(copy.deepcopy(data))
-    # Slack was switched on; Teams has a page; Now playing was on only by default, and nothing uses it
-    assert cfg.settings["integrations"] == {"slack": True, "teams": True, "nowplaying": False}
+    # Slack was switched on; nothing uses Teams, which was on only by default
+    assert cfg.settings["integrations"] == {"slack": True, "teams": False}
     for old in integrations.OLD_SWITCHES:
         assert old not in cfg.settings
-    cfg.settings["integrations"]["nowplaying"] = True
+    page = templates.build("teams")
+    data["pages"].append({"id": "t", "name": "Teams", "keys": page.keys, "screen": page.screen})
+    assert Config(copy.deepcopy(data)).settings["integrations"]["teams"] is True, "a page uses it"
+    cfg.settings["integrations"]["teams"] = True
     again = Config(copy.deepcopy(cfg.data))
-    assert again.settings["integrations"]["nowplaying"] is True, "a choice once made is kept"
+    assert again.settings["integrations"]["teams"] is True, "a choice once made is kept"
+
+
+def test_now_playing_is_not_an_integration():
+    data = Config().data
+    data["settings"]["integrations"]["nowplaying"] = False      # saved while it briefly was one
+    cfg = Config(copy.deepcopy(data))
+    assert "nowplaying" not in cfg.settings["integrations"]
+    assert cfg.settings["nowplaying_enabled"] is True, "its own switch is on the Device and app tab"
+    assert integrations.owner("faces", "nowplaying") is None
 
 
 # ---------------------------------------------------------------- the window
@@ -147,10 +160,11 @@ def test_switched_off_integrations_add_nothing_to_the_window(qapp, gui):
     win, ctl, dev, cfg = gui
     win._select("key", 0)
     assert not ({"slack", "teams"} & menu_items(step_menu(win)))
-    assert not ({"playing", "teams_call", "slack_dnd"} & menu_items(state_menu(win)))
+    states = menu_items(state_menu(win))
+    assert not ({"teams_call", "slack_dnd"} & states) and "playing" in states
     win._select("screen", 0)
     faces = {win.screen_editor.face.itemData(i) for i in range(win.screen_editor.face.count())}
-    assert not ({"slack", "teams", "nowplaying"} & faces) and "analog" in faces
+    assert not ({"slack", "teams"} & faces) and {"analog", "nowplaying"} <= faces
     from mk10manager.ui.new_page import NewPageDialog
     dlg = NewPageDialog(ctl, win)
     ids = {dlg.list.item(i).data(0x0100) for i in range(dlg.list.count())}

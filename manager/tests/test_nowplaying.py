@@ -315,7 +315,6 @@ def rig(qapp, tmp_path, monkeypatch):
     monkeypatch.setenv("MK10_PORT", dev.port)
     monkeypatch.setenv("MK10_NO_AUDIO", "1")
     cfg = Config(path=tmp_path / "config.json")
-    cfg.settings["integrations"]["nowplaying"] = True
     fake = FakeNowPlaying()
     ctl = Controller(cfg, watcher=FakeWatcher(), nowplaying=np.NowPlayingMonitor(fake))
     ctl.nowplaying.IDLE = ctl.nowplaying.BUSY = 0.05
@@ -356,6 +355,7 @@ def test_switch_it_off_from_settings(qapp, rig):
     ctl, dev, cfg, fake = rig
     fake.play()
     assert wait_until(qapp, lambda: ctl.nowplaying.track.known, 3)
-    ctl.set_integration("nowplaying", False)
+    cfg.settings["nowplaying_enabled"] = False
+    ctl.apply_nowplaying_settings()
     assert wait_until(qapp, lambda: not ctl.nowplaying.track.available, 3)
     assert expand("{track}", ctl.context()) == ""

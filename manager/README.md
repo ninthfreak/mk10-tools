@@ -42,9 +42,10 @@ If it won't start and mentions "xcb", install `libxcb-cursor0` (Debian, Ubuntu) 
   page and a Microsoft Teams page while those integrations are on. You see exactly what you'd get before you
   add it, and a template can offer to add its own context rule (the Slack one can switch to itself whenever
   you're in a huddle).
-- **Integrations** (bottom left) switch Slack, Microsoft Teams and Now playing on and off. One that's off adds
-  nothing to the window: its key steps, conditions, small-screen faces, templates, placeholders and settings
-  are hidden, and it reads nothing in the background. Keys, rules and screens that already use it are kept
+- **Integrations** (bottom left) switch the app-specific extras on and off: Slack and Microsoft Teams. What the
+  system itself provides (sound, what's playing, the app in front) isn't an integration and is always there.
+  One that's off adds nothing to the window: its key steps, conditions, small-screen faces, templates,
+  placeholders and settings are hidden, and it reads nothing in the background. Keys, rules and screens that already use it are kept
   as they are, marked "off" in the editors, and work again when it's switched back on. A new setup starts
   with all of them off; settings from before keep on the ones your pages use.
 - **Context rules** (bottom left) switch pages for you.
@@ -154,7 +155,7 @@ It prints exactly what your machine reports — which packages were found, the t
 whether artwork came back — and always saves the same thing to **`nowplaying-report.txt`** in the settings
 folder, so the answer isn't lost even when it's started without a console.
 
-Switch it on or off on the **Integrations** tab. *Album art* is separate because some players hand over a
+Switches for it are on the **Device and app** tab. *Album art* is separate because some players hand over a
 web address rather than a file, so fetching it means a small download each time the track changes.
 
 ## Slack

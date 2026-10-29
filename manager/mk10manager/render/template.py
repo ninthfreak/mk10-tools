@@ -30,8 +30,8 @@ HELP_LINES = (
     ("slack", "{slack_huddle}  {slack_dnd}  {slack_unread}  {slack_mentions}"),
     ("slack", "{slack_presence}  {slack_status}  {slack_team}  {slack_user}"),
     ("slack", "{slack_huddle:In a huddle|Free}  your own two words again"),
-    ("nowplaying", "{track}  {artist}  {album}  {player}  what's playing now"),
-    ("nowplaying", "{track_time}  {track_length}  how far in, and how long"),
+    (None, "{track}  {artist}  {album}  {player}  what's playing now"),
+    (None, "{track_time}  {track_length}  how far in, and how long"),
     ("teams", "{teams_call}  “in a call”, or nothing      {teams_mic}  “muted” / “live” in a Teams call"),
     ("teams", "{teams_mic:Muted|Live}  your own two words"),
     ("teams", "{teams_camera}  {teams_sharing}  {teams_hand}  {teams_meeting}  {teams_time}  (how long the call "
