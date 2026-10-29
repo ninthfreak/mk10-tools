@@ -122,7 +122,9 @@ the settings folder, never in `config.json`. `system/nowplaying.py` reads whatev
 (SMTC through PyWinRT on Windows — optional packages, absent means the feature is simply empty; MPRIS through
 `playerctl` on Linux) and caches the album art. `system/teams.py` reads Teams' in-call mic button through UI
 Automation (ctypes, vtable slots checked against Wine's IDL; the contract is from shuush) on its own thread, and
-does the explicit mute on/off there too: read, press only if needed, read again to confirm. `templates.py` builds ready-made pages for the New page window.
+does the explicit mute and camera on/off there too: read, press only if needed, read again to confirm.
+`micsync.py` decides how the PC microphone and Teams' mute follow each other during a call (the controller
+carries it out); its rule is that a disagreement is settled by muting the live side, never by unmuting. `templates.py` builds ready-made pages for the New page window.
 `controller.py` is the hub. It owns pages, presses, rules (edge-triggered: they act only when the result changes),
 variables, debounced saving and undo snapshots (device settings are kept out of undo).
 `actions.py` runs key actions on a worker thread; actions that touch the app (page, variable, message, brightness,
