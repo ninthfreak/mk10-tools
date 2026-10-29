@@ -9,10 +9,13 @@ from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QInputDialog, 
                                QTabBar, QTabWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from ..config import APP_NAME, store_image
+from .. import integrations
 from .. import templates as templates_mod
+from ..render import template as text_template
+from .integrations_panel import IntegrationsPanel
 from .key_editor import KeyEditor
 from .new_page import COPY, NewPageDialog
-from .panels import DevicePanel, RulesPanel, SlackPanel, VariablesPanel
+from .panels import DevicePanel, RulesPanel, VariablesPanel
 from .preview import DevicePreview
 from .screen_editor import ScreenEditor
 from .widgets import dialog_open, dialogs_open
@@ -38,6 +41,11 @@ class MainWindow(QMainWindow):
                                         {r.get("name") for r in self.ctl.config.rules
                                          if r.get("when") == "variable" and r.get("name")}),
             "icons": ctl.renderer.icons,
+            # the parts of switched-off integrations, for the editors to leave out
+            "hidden": lambda kind: integrations.hidden(self.ctl.config.settings, kind),
+            "off_note": lambda kind, item: integrations.off_note(self.ctl.config.settings, kind, item),
+            "help": lambda text: text.replace(text_template.HELP, text_template.placeholder_help(
+                integrations.enabled(self.ctl.config.settings))),
         }
 
         # ---- toolbar: pages, undo, connection
@@ -86,10 +94,10 @@ class MainWindow(QMainWindow):
         self.rules = RulesPanel(ctl)
         self.variables = VariablesPanel(ctl)
         self.device = DevicePanel(ctl)
-        self.slack = SlackPanel(ctl)
+        self.integrations = IntegrationsPanel(ctl)
         self.bottom.addTab(self.rules, "Context rules")
         self.bottom.addTab(self.variables, "Variables")
-        self.bottom.addTab(self.slack, "Slack")
+        self.bottom.addTab(self.integrations, "Integrations")
         self.bottom.addTab(self.device, "Device and app")
         left = QWidget()
         ll = QVBoxLayout(left)
@@ -138,7 +146,8 @@ class MainWindow(QMainWindow):
         self.screen_editor.apply_all.connect(self._screen_all)
         self.rules.changed.connect(lambda: self.ctl.edited())
         self.device.changed.connect(lambda: self.ctl.edited(undoable=False))
-        self.slack.changed.connect(lambda: self.ctl.edited(undoable=False))
+        self.integrations.changed.connect(lambda: self.ctl.edited(undoable=False))
+        ctl.integrations_changed.connect(self._integrations_changed)
         self.tabs.currentChanged.connect(self._tab_changed)
         self.tabs.tabMoved.connect(self._tab_moved)
         self.tabs.tabBarDoubleClicked.connect(lambda i: self._rename(i))
@@ -384,7 +393,15 @@ class MainWindow(QMainWindow):
         self.rules.reload()
         self.variables.reload()
         self.device.reload()
-        self.slack.reload()
+        self.integrations.reload()
+        self._load_editor()
+
+    def _integrations_changed(self):
+        """One was switched on or off: rebuild what lists its parts (rules, and the open key or screen)."""
+        if dialogs_open():
+            self._defer("config")
+            return
+        self.rules.reload()
         self._load_editor()
 
     def _undo_state(self, can_undo, can_redo):

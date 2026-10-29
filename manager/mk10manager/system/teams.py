@@ -76,6 +76,11 @@ class TeamsState:
     def button_name(self) -> str:
         return self.name_of(MIC_BUTTON)
 
+    @property
+    def clock_known(self) -> bool:
+        """Only Teams' own call clock is shown. Without it (teams-for-linux has none) the time is unknown."""
+        return self.in_call and bool(self.call_since)
+
     def call_seconds(self, now: float | None = None) -> int:
         if not self.in_call or not self.call_since:
             return 0
@@ -182,12 +187,12 @@ def short_device_name(name: str) -> str:
 
 
 class NullTeams:
-    note = "Reading Teams needs Windows for now (UI Automation)."
+    note = "Reading Teams needs Windows, or Linux with teams-for-linux."
 
     def read(self) -> TeamsState:
         return TeamsState(available=False, note=self.note)
 
-    def press(self, control: str = "mic", focus: bool = False):
+    def press(self, control: str = "mic", focus: bool = False, want=None):
         return False, self.note
 
     def close(self):
@@ -604,8 +609,8 @@ class WindowsTeams:
                           shared=shared, meeting=meeting, started=started,
                           names=tuple(sorted(names.items())), read_at=time.monotonic())
 
-    def press(self, control: str = "mic", focus: bool = False):
-        """Press one of the call buttons, or STOP_SHARE for whichever Stop sharing button Teams shows. With
+    def press(self, control: str = "mic", focus: bool = False, want=None):
+        """Press one of the call buttons (`want`, the state asked for, isn't needed: a press flips it), or STOP_SHARE for whichever Stop sharing button Teams shows. With
         `focus`, bring the call window forward first (for a button that opens something there, such as Share's
         picker)."""
         if not self._ready():
@@ -796,15 +801,23 @@ class WindowsTeams:
 
 
 def make_backend():
-    return WindowsTeams() if IS_WIN else NullTeams()
+    """Windows: the Teams window, read like a screen reader does. Linux: teams-for-linux's own D-Bus control."""
+    if IS_WIN:
+        return WindowsTeams()
+    if sys.platform.startswith("linux"):
+        from .teams_linux import TeamsForLinux
+        return TeamsForLinux()
+    return NullTeams()
 
 
 def describe_backend(backend=None) -> str:
     backend = backend if backend is not None else make_backend()
     if isinstance(backend, NullTeams):
-        return "not available here (Windows only for now)"
+        return "not available here (Windows, or Linux with teams-for-linux)"
     if IS_WIN and isinstance(backend, WindowsTeams):
         return "UI Automation (the Teams window's accessibility data)"
+    if type(backend).__name__ == "TeamsForLinux":
+        return "teams-for-linux's D-Bus control, through busctl"
     return type(backend).__name__
 
 
@@ -833,14 +846,16 @@ def report(reads: int = 3, gap: float = 1.0) -> str:
                                               else "no Teams window found"))
             else:
                 seen_call = True
-                lines.append("Read %d: in %r: %s" % (i + 1, s.meeting, _state_words(s)))
+                lines.append("Read %d: in %s: %s" % (i + 1, repr(s.meeting) if s.meeting else "a call",
+                                                    _state_words(s)))
         if hasattr(backend, "describe"):
             lines.append("")
             lines.extend(backend.describe())
-        lines.append("")
-        lines.extend(settings_report())
-        lines.append("")
-        lines.extend(cameras_report())
+        if IS_WIN:
+            lines.append("")
+            lines.extend(settings_report())
+            lines.append("")
+            lines.extend(cameras_report())
         lines += ["", "Nothing was pressed or changed." if seen_call else
                   "Nothing was pressed or changed. Run this during a Teams call to see the call buttons."]
     finally:
@@ -865,6 +880,8 @@ def tree_report() -> str:
 
 def settings_report() -> list[str]:
     """The device entries in Teams' own settings file, exactly as written there. Shown for reference, not used."""
+    if not IS_WIN:
+        return []
     path = os.path.join(teams_settings_folder(), "cmd_settings.json")
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
@@ -971,12 +988,18 @@ class TeamsMonitor(QObject):
         was = self._enabled
         self._enabled = bool(enabled)
         if was and not self._enabled:
-            self.state = TeamsState(available=False, note="Switched off on the Device and app tab.")
+            self.state = TeamsState(available=False, note="Microsoft Teams is switched off on the Integrations tab.")
             self.changed.emit()
         self._poke.set()
 
     def refresh_soon(self):
         self._poke.set()
+
+    @property
+    def sync_safe(self) -> bool:
+        """False when the backend's "muted" already includes the PC microphone being muted (teams-for-linux
+        judges it from the call's sound), so keeping the two in step would feed on itself."""
+        return bool(getattr(self.backend, "SYNC_SAFE", True))
 
     def command(self, kind: str, timeout: float = 5.0):
         """One of COMMANDS. Blocks until done: call it from a worker, never the GUI thread. Returns (ok, message);
@@ -984,7 +1007,7 @@ class TeamsMonitor(QObject):
         if kind not in self.COMMANDS:
             return False, "Unknown Teams command %s" % kind
         if not self._enabled:
-            return False, "Reading Teams is switched off on the Device and app tab."
+            return False, "Microsoft Teams is switched off on the Integrations tab."
         if not (self._thread and self._thread.is_alive()):
             return False, "The Teams reader isn't running."
         done, result = threading.Event(), {}
@@ -1027,12 +1050,13 @@ class TeamsMonitor(QObject):
     def _publish(self, new: TeamsState):
         old = self.state
         if new.in_call:
+            # Only Teams' own clock: a time counted from when this app noticed the call would be a guess.
             since = old.call_since if old.in_call and old.call_since else 0.0
             if new.started:
                 # Teams' clock counts whole seconds, so the call began up to a second before `started`: the
                 # earliest reading is the closest. A jump of more than a couple of seconds is a new clock.
                 since = min(since, new.started) if since and abs(since - new.started) < 2.0 else new.started
-            new = replace(new, call_since=since or time.monotonic())
+            new = replace(new, call_since=since)
         self.state = new
         if not new.same(old):
             self.changed.emit()
@@ -1044,7 +1068,7 @@ class TeamsMonitor(QObject):
             except queue.Empty:
                 return
             try:
-                ok, message = self._do(kind) if self._enabled else (False, "Reading Teams is switched off.")
+                ok, message = self._do(kind) if self._enabled else (False, "Microsoft Teams is switched off.")
             except Exception as e:
                 ok, message = False, "Teams command failed: %s" % e
             result.update(ok=ok, message=message)
@@ -1081,7 +1105,7 @@ class TeamsMonitor(QObject):
             # Share opens Teams' picker: what to share is chosen there, so there's nothing to wait for here.
             ok, message = self.backend.press(control, focus=True)
             return (True, "Teams' share picker is open") if ok else (False, message)
-        ok, message = self.backend.press(STOP_SHARE if field_name == "sharing" else control)
+        ok, message = self.backend.press(STOP_SHARE if field_name == "sharing" else control, want=want)
         if not ok:
             return False, message
         deadline = time.monotonic() + self.CONFIRM_SECONDS

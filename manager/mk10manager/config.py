@@ -9,6 +9,8 @@ import time
 import uuid
 from pathlib import Path
 
+from . import integrations
+
 APP_NAME = "MK10 Manager"
 CONFIG_VERSION = 1
 KEY_COUNT = 10
@@ -25,14 +27,13 @@ DEFAULT_SETTINGS = {
     "tray_hint_shown": False,
     "audio_levels": True,          # measure how loud the speakers and microphone are, for the meters
     "meter_fps": 10,               # redraws a second while a live meter is on screen
-    "slack_enabled": False,        # the token itself lives in its own file, never in here
-    "slack_team_id": "",           # remembered from auth.test so deep links work before the first poll
+    # "integrations": {"slack": bool, ...}: which are switched on (see integrations.py; set in _normalise)
+    "slack_team_id": "",           # the Slack token itself lives in its own file, never in here           # remembered from auth.test so deep links work before the first poll
     "slack_channels": "",          # conversation ids to count unread messages in
     "slack_unread_source": "channels",
     "slack_poll_seconds": 10,
     "nowplaying_enabled": True,    # read what the system says is playing
     "nowplaying_art": True,        # fetch the album art too (a download, for players that give a URL)
-    "teams_enabled": True,         # read Teams' call and mute state from its window (Windows only)
     "teams_sync_mic": True,        # during a Teams call, keep the PC microphone's mute the same as Teams'
 }
 
@@ -203,6 +204,12 @@ class Config:
         d = self.data
         d.setdefault("version", CONFIG_VERSION)
         s = d.setdefault("settings", {})
+        if not isinstance(s.get("integrations"), dict):
+            s["integrations"] = integrations.initial_switches(d)
+        for gone in set(s["integrations"]) - set(integrations.BY_ID):
+            del s["integrations"][gone]                 # Now playing was one, briefly
+        for old in integrations.OLD_SWITCHES:
+            s.pop(old, None)
         for k, v in DEFAULT_SETTINGS.items():
             s.setdefault(k, v)
         d.setdefault("rules", [])

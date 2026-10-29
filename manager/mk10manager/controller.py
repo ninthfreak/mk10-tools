@@ -8,6 +8,7 @@ from datetime import datetime
 from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QImage
 
+from . import integrations
 from . import rules as rules_mod
 from .actions import ActionRunner, run_command_output
 from .config import Config, config_dir
@@ -27,9 +28,9 @@ from .system.teams import TeamsMonitor
 NOT_UNDOABLE = ("variables", "seen_apps")
 # Device and app settings are changed live on the Device tab; undo should never roll them back.
 NOT_UNDOABLE_SETTINGS = ("brightness", "port", "press_feedback", "time_24h", "font_family", "start_minimized",
-                         "tray_hint_shown", "audio_levels", "meter_fps", "slack_enabled", "slack_team_id",
+                         "tray_hint_shown", "audio_levels", "meter_fps", "integrations", "slack_team_id",
                          "slack_channels", "slack_unread_source", "slack_poll_seconds",
-                         "nowplaying_enabled", "nowplaying_art", "teams_enabled", "teams_sync_mic")
+                         "nowplaying_enabled", "nowplaying_art", "teams_sync_mic")
 SLOW_TICK_MS = 200          # how often we look at the clock and the message timer when nothing is animating
 _NO_RESULT = object()
 
@@ -76,6 +77,7 @@ class Controller(QObject):
     config_changed = Signal()            # config replaced or edited elsewhere (undo, rules): editors reload
     settings_changed = Signal()          # device/app settings changed by a key (brightness)
     variables_changed = Signal()
+    integrations_changed = Signal()      # one was switched on or off: editors show or hide its parts
     notify = Signal(str)                 # short message for the status bar
     device_pressed = Signal(int, bool)   # key position, pressed
     app_changed = Signal(str, str)
@@ -295,7 +297,7 @@ class Controller(QObject):
 
     def _sync_mic(self):
         """During a Teams call, keep the PC microphone's mute and Teams' mute the same (see micsync.py)."""
-        if not self.config.settings.get("teams_sync_mic", True):
+        if not self.config.settings.get("teams_sync_mic", True) or not getattr(self.teams, "sync_safe", True):
             self.micsync.reset()
             return
         audio = self.audio.state
@@ -552,20 +554,32 @@ class Controller(QObject):
         self.edited(undoable=False)
 
     def apply_slack_settings(self):
-        """Re-read the token file and the Slack tab's settings. Called at start-up and after a change there."""
+        """Re-read the token file and the Slack settings on the Integrations tab. Called at start-up and after a change there."""
         s = self.config.settings
         folder = self.config.path.parent if self.config.path else config_dir()
         self.slack.configure(read_token(folder), channel_ids(s.get("slack_channels", "")),
                              s.get("slack_poll_seconds", 10), s.get("slack_unread_source", "channels"),
-                             bool(s.get("slack_enabled", False)))
+                             integrations.is_on(s, "slack"))
 
     def apply_nowplaying_settings(self):
         s = self.config.settings
-        self.nowplaying.configure(bool(s.get("nowplaying_enabled", True)),
-                                  bool(s.get("nowplaying_art", True)))
+        self.nowplaying.configure(bool(s.get("nowplaying_enabled", True)), bool(s.get("nowplaying_art", True)))
 
     def apply_teams_settings(self):
-        self.teams.configure(bool(self.config.settings.get("teams_enabled", True)))
+        self.teams.configure(integrations.is_on(self.config.settings, "teams"))
+
+    def set_integration(self, integration_id: str, on: bool):
+        """Switch an integration on or off (the Integrations tab). Its monitor starts or stops reading, and the
+        editors are told to show or hide its parts. Nothing that uses it is changed."""
+        switches = self.config.settings.setdefault("integrations", {})
+        if bool(switches.get(integration_id)) == bool(on):
+            return
+        switches[integration_id] = bool(on)
+        self.apply_slack_settings()
+        self.apply_teams_settings()
+        self._dirty = True
+        self.integrations_changed.emit()
+        self.edited(undoable=False)
 
     def apply_audio_settings(self):
         """Called when the live-meter switch or the meter speed changes on the Device tab."""

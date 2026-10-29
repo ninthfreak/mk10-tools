@@ -134,8 +134,8 @@ class KeyEditor(QWidget):
         add.setPopupMode(QToolButton.InstantPopup)
         add.setToolButtonStyle(Qt.ToolButtonTextOnly)
         menu = QMenu(add)
-        for kind, (label, _fields) in ACTION_TYPES.items():
-            menu.addAction(label).setData(kind)
+        menu.aboutToShow.connect(lambda: self._fill_menu(menu, [(k, label) for k, (label, _f) in ACTION_TYPES.items()],
+                                                         "actions"))
         menu.triggered.connect(lambda a: self._add_step(a.data()))
         add.setMenu(menu)
         self.b_del = QPushButton("Remove step")
@@ -177,8 +177,7 @@ class KeyEditor(QWidget):
         add_state.setPopupMode(QToolButton.InstantPopup)
         add_state.setToolButtonStyle(Qt.ToolButtonTextOnly)
         smenu = QMenu(add_state)
-        for kind, label in CONDITIONS:
-            smenu.addAction(label).setData(kind)
+        smenu.aboutToShow.connect(lambda: self._fill_menu(smenu, CONDITIONS, "conditions"))
         smenu.triggered.connect(lambda a: self._add_state(a.data()))
         add_state.setMenu(smenu)
         self.sb_del = QPushButton("Remove")
@@ -269,12 +268,29 @@ class KeyEditor(QWidget):
         self.icon_preview.setStyleSheet("background: %s; border-radius: 6px; color: gray;"
                                         % ((self.key or {}).get("bg") or "#2C2C2A"))
 
+    def _fill_menu(self, menu, items, kind):
+        """Built each time it opens, so switching an integration on or off shows at once."""
+        hidden = self.providers.get("hidden", lambda k: set())(kind)
+        menu.clear()
+        for item_id, label in items:
+            if item_id not in hidden:
+                menu.addAction(label).setData(item_id)
+
+    def _off(self, kind, item_id) -> str:
+        return self.providers.get("off_note", lambda k, i: "")(kind, item_id)
+
+    def _step_text(self, a: dict) -> str:
+        return summary(a, self.ctl.page_name) + self._off("actions", a.get("type"))
+
+    def _state_text(self, st: dict) -> str:
+        return describe_state(st) + self._off("conditions", st.get("when"))
+
     def _fill_steps(self):
         row = self.steps.currentRow()
         self.steps.blockSignals(True)
         self.steps.clear()
         for a in self.key.get("actions") or []:
-            self.steps.addItem(QListWidgetItem(summary(a, self.ctl.page_name)))
+            self.steps.addItem(QListWidgetItem(self._step_text(a)))
         self.steps.blockSignals(False)
         n = self.steps.count()
         if n:
@@ -428,7 +444,7 @@ class KeyEditor(QWidget):
         self.states.blockSignals(True)
         self.states.clear()
         for st in (self.key or {}).get("states") or []:
-            self.states.addItem(QListWidgetItem(describe_state(st)))
+            self.states.addItem(QListWidgetItem(self._state_text(st)))
         self.states.blockSignals(False)
         n = self.states.count()
         if n:
@@ -489,7 +505,7 @@ class KeyEditor(QWidget):
         if 0 <= row < len(states):
             it = self.states.item(row)
             if it:
-                it.setText(describe_state(states[row]))
+                it.setText(self._state_text(states[row]))
         self.changed.emit()
 
     def _step_changed(self, row):
@@ -497,5 +513,5 @@ class KeyEditor(QWidget):
         if 0 <= row < len(acts):
             it = self.steps.item(row)
             if it:
-                it.setText(summary(acts[row], self.ctl.page_name))
+                it.setText(self._step_text(acts[row]))
         self.changed.emit()

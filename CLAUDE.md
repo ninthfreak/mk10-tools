@@ -62,6 +62,8 @@ format, `docs/call-control.md` for the USB headset test, and `docs/research-note
   Automation sees in Teams (the `microphone-button`, its name, every button in the call window, the call clock,
   the video tiles) and saves `teams-report.txt`, plus the whole tree. `teams-menu-windows.bat` waits 15 s first,
   so a Teams menu can be opened and captured. Read-only. Use it first when the Teams keys stop following Teams.
+  On Linux `./run-linux.sh teams` prints what teams-for-linux's D-Bus control reports. Tests:
+  `tests/test_teams_linux.py` runs the real `busctl` against `tests/fake_teams_for_linux.py` on a private bus.
 - **What's playing:** `manager/nowplaying-windows.bat` (double-click), `run-windows.bat nowplaying` or
   `./run-linux.sh nowplaying` prints what this PC reports (packages found, track, position, artwork) and
   saves it to `nowplaying-report.txt` in the settings folder. Use it rather than guessing when the Now
@@ -97,8 +99,13 @@ format, `docs/call-control.md` for the USB headset test, and `docs/research-note
 - They assess risk and tradeoffs themselves. Give accurate feasibility reads, including for hard or dead-end paths.
   Don't steer toward easier options or soften difficulty.
 - **Don't infer or divine data.** Show only what can be acquired directly from its source (for Teams: what Teams
-  itself displays). If it can't be, say so and discuss possible methods with the user before building any.
-  Names must match what the source shows: a device name from Windows that Teams doesn't display only confuses.
+  itself displays, or what a client like teams-for-linux reports). If it can't be, say so and discuss possible
+  methods with the user before building any. Names must match what the source shows: a device name from Windows
+  that Teams doesn't display only confuses.
+- **Lean on maintained, pre-built systems** (libraries, apps' own control interfaces such as teams-for-linux's
+  D-Bus, shuush's contract) over building and maintaining our own, so there's less for us to keep working.
+- These preferences can pull against each other. Weigh all of them and show the tradeoff; don't pick the one
+  that suits an option and leave the others out.
 - Rate **difficulty (x/5)** and **confidence** explicitly. Present recommendations as recommendations, not decisions.
   Keep uncertainty visible.
 - Keep text short and skimmable: short sentences, headers, lists.
@@ -121,12 +128,21 @@ editor forms through `schema.Field`. `render/meters.py` draws level meters behin
 `parec` on Linux) on its own thread; live levels are only measured while a page on screen shows one.
 `conditions.py` holds the one condition evaluator, shared by context rules (which switch pages) and key *states*
 (which repaint a key while something is true — that's what makes a mute key show the real mute state).
+`integrations.py` is the registry of optional integrations with specific apps (Slack, Teams): which action types,
+conditions, faces, templates and placeholders each adds. What the OS itself provides (sound, now playing, the
+active window) is never an integration. One that's switched off (`settings["integrations"]`, the
+Integrations tab, `controller.set_integration`) is hidden from every editor and its monitor stops; what already
+uses it is kept and marked "off". **A new integration gets an entry there**, a monitor with `configure(enabled,
+...)` called from the controller's `apply_*_settings`, and its settings widget in `ui/integrations_panel.py`.
 `system/slack.py` is the Slack Web API client and its polling monitor; the token lives in its own 0600 file in
 the settings folder, never in `config.json`. `system/nowplaying.py` reads whatever the system says is playing
 (SMTC through PyWinRT on Windows — optional packages, absent means the feature is simply empty; MPRIS through
 `playerctl` on Linux) and caches the album art. `system/teams.py` reads Teams' in-call mic button through UI
 Automation (ctypes, vtable slots checked against Wine's IDL; the contract is from shuush) on its own thread, and
 does the explicit mute and camera on/off there too: read, press only if needed, read again to confirm.
+`system/teams_linux.py` is the Linux backend: teams-for-linux's own D-Bus control through `busctl` (a subprocess,
+because QtDBus's blocking call holds the GIL). Its "muted" comes from the call's audio, so it's `SYNC_SAFE = False`
+and the PC microphone isn't synced with it. Only Teams' own call clock is shown; without one the time is unknown.
 `micsync.py` decides how the PC microphone and Teams' mute follow each other during a call (the controller
 carries it out); its rule is that a disagreement is settled by muting the live side, never by unmuting. A new
 default microphone restarts it, so plugging in a headset mid-call can never unmute anyone. `templates.py` builds ready-made pages for the New page window.

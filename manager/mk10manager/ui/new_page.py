@@ -5,6 +5,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QVBoxLayout)
 
+from .. import integrations
 from .. import templates as templates_mod
 
 COPY = "__copy__"
@@ -23,14 +24,25 @@ class NewPageDialog(QDialog):
 
         self.list = QListWidget()
         self.list.setMaximumWidth(230)
+        hidden = integrations.hidden(ctl.config.settings, "templates")
         for t in templates_mod.TEMPLATES:
+            if t.id in hidden:
+                continue
             item = QListWidgetItem(t.name)
             item.setData(Qt.UserRole, t.id)
             self.list.addItem(item)
         copy_item = QListWidgetItem("Copy of “%s”" % ctl.page["name"])
         copy_item.setData(Qt.UserRole, COPY)
         self.list.insertItem(1, copy_item)
-        body.addWidget(self.list)
+        left = QVBoxLayout()
+        left.addWidget(self.list, 1)
+        if hidden:
+            more = QLabel("More templates come with integrations: switch them on in the Integrations tab.")
+            more.setWordWrap(True)
+            more.setMaximumWidth(230)
+            more.setStyleSheet("color: gray;")
+            left.addWidget(more)
+        body.addLayout(left)
 
         side = QVBoxLayout()
         body.addLayout(side, 1)
