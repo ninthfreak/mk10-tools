@@ -118,8 +118,11 @@ following [shuush](https://github.com/supermem613/shuush) (MIT, C#, started June
   sharing): `video-button` "Turn camera on", `hangup-button` "Leave", `raisehands-button` "Raise",
   `share-button` "Share", `reaction-menu-button` "React", `chat-button`, `roster-button` "People",
   `view-mode-button`, `meeting-details-button` "Notes", `start-breakout-room-button` "Rooms",
-  `audio-button-configure` / `video-button-configure` (the device menus), `hangup-button-more-options`. The
-  names for camera on, hand raised and sharing haven't been read yet.
+  `audio-button-configure` / `video-button-configure` (the device menus), `hangup-button-more-options`.
+- Second report, camera on and sharing: `video-button` "Turn camera off", `share-button` "Stop sharing". So those
+  names flip with the state, like the mic's. `raisehands-button` still said "Raise" (whether the hand was
+  raised then is unconfirmed). Sharing adds two windows the reader passes over: a `ScreenBorderWindow` from a
+  second Teams process and a `Sharing control bar … | Pinned window`. The mic button was still found in 51 ms.
 
 Asked for: which input/output devices Teams is using, the time, how long the meeting has been going,
 how many people are in it, and who is speaking.
