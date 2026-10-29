@@ -108,8 +108,18 @@ following [shuush](https://github.com/supermem613/shuush) (MIT, C#, started June
   Teams fixes were all about *when* to look: meetings that don't update Windows' microphone-in-use record,
   holding the state across a redraw that hides the button for one poll, and idle CPU. Four months is a short
   record. MuteDeck's changelog shows repeated breakage from Teams redesigns, so expect it eventually.
-- The ctypes vtable slots were checked against Wine's `uiautomationclient.idl`. Not yet run on the work PC:
-  `teams-windows.bat` during a call is the first check.
+- The ctypes vtable slots were checked against Wine's `uiautomationclient.idl`.
+- **Confirmed on the work PC (29 October 2026):** `microphone-button` found in 26 ms, name `Unmute mic` while
+  muted, pressable by Invoke and LegacyIAccessible. During a call Teams has two windows, both class
+  `TeamsWebView` in one `ms-teams.exe` process: the meeting (`Test | <org> | <account> | Microsoft Teams`) and the
+  main one (`Calls | …`). A search of a window without the button took about 60 ms; listing the desktop's
+  windows took about 200 ms in a fresh process (the reader keeps its process-name cache, so less in the app).
+- The call window's other buttons, by AutomationId, as Teams named them then (camera off, hand down, not
+  sharing): `video-button` "Turn camera on", `hangup-button` "Leave", `raisehands-button` "Raise",
+  `share-button` "Share", `reaction-menu-button` "React", `chat-button`, `roster-button` "People",
+  `view-mode-button`, `meeting-details-button` "Notes", `start-breakout-room-button` "Rooms",
+  `audio-button-configure` / `video-button-configure` (the device menus), `hangup-button-more-options`. The
+  names for camera on, hand raised and sharing haven't been read yet.
 
 Asked for: which input/output devices Teams is using, the time, how long the meeting has been going,
 how many people are in it, and who is speaking.
