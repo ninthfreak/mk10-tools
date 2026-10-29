@@ -3,7 +3,7 @@
 import threading
 import time
 
-from mk10manager.system.teams import (CAMERA_BUTTON, HAND_BUTTON, MIC_BUTTON, SHARE_BUTTON, TeamsState,
+from mk10manager.system.teams import (CAMERA_BUTTON, HAND_BUTTON, MIC_BUTTON, SHARE_BUTTON, STOP_SHARE, TeamsState,
                                       parse_camera_name, parse_mic_name, parse_share_name)
 
 
@@ -17,12 +17,12 @@ class FakeTeams:
         self.meeting = "Weekly sync"
         self.muted = False
         self.camera = False
-        self.sharing = False
+        self.sharing = False        # a screen or window: share-button says Stop sharing
+        self.content = False        # a whiteboard or an Excel sheet: a Stop sharing button of its own
         self.hand = None            # what the hand button's pressed state says (None: it doesn't say)
         self.shared = "your screen" # what the sharing bar says, while sharing
         self.elapsed = None         # seconds on Teams' call clock when the call was joined (None: no clock)
         self.joined_at = 0.0
-        self.camera_device = ""
         self.name = None            # set to make the mic button say something else (another language)
         self.press_works = True     # False: Teams ignores presses
         self.misses = 0             # how many reads in a row lose the buttons, as a WebView2 redraw does
@@ -48,9 +48,8 @@ class FakeTeams:
                 started = now - int(self.elapsed + now - self.joined_at)      # the clock shows whole seconds
             return TeamsState(available=True, running=True, in_call=True, muted=parse_mic_name(names[MIC_BUTTON]),
                               camera=parse_camera_name(names[CAMERA_BUTTON]),
-                              sharing=parse_share_name(names[SHARE_BUTTON]), hand=self.hand,
-                              shared=self.shared if self.sharing else "", meeting=self.meeting,
-                              camera_device=self.camera_device, started=started,
+                              sharing=parse_share_name(names[SHARE_BUTTON]) or self.content, hand=self.hand,
+                              shared=self.shared if self.sharing else "", meeting=self.meeting, started=started,
                               names=tuple(sorted(names.items())), read_at=now)
 
     def press(self, control="mic", focus=False):
@@ -65,8 +64,12 @@ class FakeTeams:
                     self.muted = not self.muted
                 elif control == "camera":
                     self.camera = not self.camera
-                elif control == "share" and self.sharing:       # Share itself only opens Teams' picker
+                elif control == "share" and self.sharing:       # otherwise Share only opens Teams' picker
                     self.sharing = False
+                elif control == STOP_SHARE:
+                    if not (self.sharing or self.content):
+                        return False, "Teams isn't showing a Stop sharing button"
+                    self.sharing = self.content = False
             return True, ""
 
     def close(self):

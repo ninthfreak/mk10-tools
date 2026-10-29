@@ -133,16 +133,20 @@ following [shuush](https://github.com/supermem613/shuush) (MIT, C#, started June
     what's on screen; the name lagged 30 s behind it, which matches the user's "30 s behind". The reader takes
     the larger, and keeps the earliest start time its readings imply (the clock counts whole seconds).
   - **Sharing:** the `Sharing control bar` window holds a button `You're sharing your screen` (and its own
-    `share-button`). What it says for a window share isn't known yet; the key shows whatever follows "sharing".
+    `share-button`). The user found it never says which screen or window. A whiteboard or an Excel sheet doesn't
+    change `share-button` at all: Teams adds a separate "Stop Sharing" button. The reader now counts any button
+    whose name starts "Stop sharing" (any capitals); its exact name and place haven't been seen in a report yet.
   - **Camera:** Teams' `LocalCache\Microsoft\MSTeams\cmd_settings.json` has `"Camera"` = a device interface path
-    (`\\?\usb#vid_046d&pid_0825&…#{65e8773d-…}\global`, a Logitech C270) that wasn't among Windows' present
-    cameras. The reader turns the path into an instance id and asks cfgmgr32 for the device's name, present
-    devices only, so a camera that isn't plugged in names nothing rather than the wrong thing.
-  - **Audio devices:** none of this says which microphone or speakers Teams picked, and the user saw the keys
-    name Windows' defaults instead. Windows' audio sessions do: every endpoint lists the processes with a
-    session on it and whether it's active. The Manager takes the endpoints where `ms-teams.exe` (or a process it
-    started, such as WebView2) is streaming. Not yet seen on the work PC: which process the sessions belong
-    to. The report lists them.
+    (`\\?\usb#vid_046d&pid_0825&…#{65e8773d-…}\global`, a Logitech C270). It does update when the camera is
+    changed in Teams. A first try named it through Windows' device list (cfgmgr32): right for the C270, but the
+    built-in camera came out as "Camera AI Effect Opt-in", which Teams never shows. Removed.
+  - **Audio devices:** a first try took Teams' devices from Windows' audio sessions (endpoints where
+    `ms-teams.exe` or its child processes had an active session). On the work PC it showed the wrong microphone
+    at the start of a call, the right one later, and Windows' default again after. Removed: it was inference.
+- **Rule from the user (October 2026): don't infer or divine data.** Show only what Teams itself displays; when
+  that's not possible, discuss methods first. During a call Teams doesn't display its selected devices; it shows
+  them in the device menus (the arrows by the camera and microphone) and in Settings › Devices. Whether those are
+  readable is the next thing to find out (`teams-menu-windows.bat`).
 
 Asked for: which input/output devices Teams is using, the time, how long the meeting has been going,
 how many people are in it, and who is speaking.

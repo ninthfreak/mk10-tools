@@ -13,7 +13,11 @@ was confirmed on the work PC's Teams in October 2026 (docs/research-notes.md):
   is the one on screen, so the larger of the two is used.
 - Your own video tile is an image named "Myself video, <you>, ..., Hand raised position 1, ...": that's where
   the raised hand shows. While you share, a separate "Sharing control bar" window has a button named "You're
-  sharing your screen" (or whatever you picked).
+  sharing your screen". Content Teams shares inside the meeting (a whiteboard, an Excel sheet) gets its own,
+  separate "Stop sharing" button instead of changing ``share-button``.
+- Everything shown comes from what Teams itself displays. Nothing is inferred: no guessing which devices Teams
+  uses from Windows' audio, no camera names from Windows' device list. When Teams doesn't show something, it's
+  unknown here too.
 - Buttons have to be found again on every read. WebView2 swaps its accessibility nodes when it redraws, and a
   node kept from an earlier read goes on returning the old name without any error.
 - Pressing a button (UI Automation's Invoke pattern) works without Teams having focus and without a shortcut.
@@ -26,7 +30,6 @@ uiautomationclient.idl. Everything else gets NullTeams. `report()` and `tree_rep
 for when Teams changes and this needs updating.
 """
 
-import json
 import os
 import queue
 import re
@@ -42,6 +45,7 @@ MIC_BUTTON, CAMERA_BUTTON, SHARE_BUTTON, HAND_BUTTON = (
     "microphone-button", "video-button", "share-button", "raisehands-button")
 CONTROLS = {"mic": MIC_BUTTON, "camera": CAMERA_BUTTON, "share": SHARE_BUTTON, "hand": HAND_BUTTON}
 CALL_CLOCK = "call-duration-custom"
+STOP_SHARE = "stop_share"       # press(): whichever Stop sharing button Teams shows
 
 
 @dataclass(frozen=True)
@@ -55,7 +59,6 @@ class TeamsState:
     hand: bool | None = None      # True: your hand is up (from your own video tile, when it's on screen)
     shared: str = ""              # what you're sharing, in Teams' words after "You're sharing": "your screen"
     meeting: str = ""             # the meeting's name, from its window title
-    camera_device: str = ""       # the camera Teams is set to use, when it's plugged in
     started: float = 0.0          # time.monotonic() when Teams' own call clock says the call began (0: unknown)
     call_since: float = 0.0       # when the call began, as the monitor keeps it (Teams' clock, else first seen)
     names: tuple = ()             # ((AutomationId, name), ...) of the buttons, as read
@@ -80,9 +83,9 @@ class TeamsState:
 
     def same(self, other: "TeamsState") -> bool:
         return (self.available, self.running, self.in_call, self.muted, self.camera, self.sharing, self.hand,
-                self.shared, self.meeting, self.camera_device, self.note) == \
+                self.shared, self.meeting, self.note) == \
                (other.available, other.running, other.in_call, other.muted, other.camera, other.sharing,
-                other.hand, other.shared, other.meeting, other.camera_device, other.note)
+                other.hand, other.shared, other.meeting, other.note)
 
 
 def parse_mic_name(name: str) -> bool | None:
@@ -142,30 +145,18 @@ def parse_shared(name: str) -> str:
     return m.group(1) if m else ""
 
 
+def is_stop_sharing(name: str) -> bool:
+    """Teams' Stop sharing buttons: ``share-button`` while you share a screen or window, and a separate one for a
+    whiteboard or an Excel sheet. Their names start with the words, whatever the capitals."""
+    return (name or "").strip().lower().startswith("stop sharing")
+
+
 def hand_from_tile(name: str) -> bool | None:
     """Your own video tile: 'Myself video, <you>, ..., Hand raised position 1, ...'. None for anyone else's."""
     words = (name or "").strip().lower()
     if not words.startswith("myself"):
         return None
     return "hand raised" in words
-
-
-def camera_setting(text: str) -> str:
-    """The camera Teams saved in cmd_settings.json, as Windows' device path ('\\\\?\\usb#vid_046d&...')."""
-    m = re.search(r'"Camera"\s*:\s*("(?:[^"\\]|\\.)*")', text or "")
-    try:
-        return json.loads(m.group(1)) if m else ""
-    except ValueError:
-        return ""
-
-
-def instance_id(device_path: str) -> str:
-    """'\\\\?\\usb#vid_046d&pid_0825&mi_00#6&ebf4f56&0&0000#{65e8...}\\global' -> the device's instance id,
-    'usb\\vid_046d&pid_0825&mi_00\\6&ebf4f56&0&0000', which is what Windows looks devices up by."""
-    path = (device_path or "").strip()
-    if path[:4] in ("\\\\?\\", "\\\\.\\"):
-        path = path[4:]
-    return path.split("#{")[0].replace("#", "\\")
 
 
 def teams_settings_folder() -> str:
@@ -228,28 +219,6 @@ if IS_WIN:
     IID_TogglePattern = GUID("{94CF8058-9B8D-4AB9-8BFD-4CD0A33C8C70}")
     IID_LegacyPattern = GUID("{828055AD-355B-4435-86D5-3B51C14A9B1B}")
 
-    _cfgmgr = ctypes.WinDLL("cfgmgr32")
-
-    class DEVPROPKEY(ctypes.Structure):
-        _fields_ = [("fmtid", GUID), ("pid", ctypes.c_ulong)]
-
-    DEVPKEY_FriendlyName = DEVPROPKEY(GUID("{A45C254E-DF1C-4EFD-8020-67D146A850E0}"), 14)
-    DEVPKEY_DeviceDesc = DEVPROPKEY(GUID("{A45C254E-DF1C-4EFD-8020-67D146A850E0}"), 2)
-
-    def device_name(instance: str, present_only: bool = True) -> str:
-        """The name Windows gives a device, by instance id. '' when it isn't plugged in (with present_only) or
-        Windows has never seen it."""
-        node = ctypes.c_ulong(0)
-        flags = 0 if present_only else 1          # CM_LOCATE_DEVNODE_NORMAL (present only), _PHANTOM (remembered)
-        if not instance or _cfgmgr.CM_Locate_DevNodeW(byref(node), ctypes.c_wchar_p(instance), flags) != 0:
-            return ""
-        for key in (DEVPKEY_FriendlyName, DEVPKEY_DeviceDesc):
-            kind, buf = ctypes.c_ulong(0), ctypes.create_unicode_buffer(256)
-            size = ctypes.c_ulong(ctypes.sizeof(buf))
-            if _cfgmgr.CM_Get_DevNode_PropertyW(node, byref(key), byref(kind), buf, byref(size), 0) == 0 \
-                    and kind.value == 0x12 and buf.value.strip():          # DEVPROP_TYPE_STRING
-                return buf.value.strip()
-        return ""
 
 COINIT_MULTITHREADED = 0x0      # UI Automation clients belong in the MTA
 RPC_E_CHANGED_MODE = -2147417850
@@ -259,6 +228,7 @@ TREE_CHILDREN, TREE_DESCENDANTS = 0x2, 0x4
 UIA_NAME, UIA_AUTOMATION_ID, UIA_CONTROL_TYPE = 30005, 30011, 30003
 UIA_BUTTON, UIA_IMAGE = 50000, 50006
 UIA_INVOKE, UIA_TOGGLE, UIA_LEGACY = 10000, 10015, 10018
+IGNORE_CASE, MATCH_SUBSTRING = 0x1, 0x2      # PropertyConditionFlags (substring needs Windows 10 1809 or later)
 CONTROL_TYPES = {50000: "Button", 50002: "CheckBox", 50004: "Edit", 50005: "Hyperlink", 50006: "Image",
                  50007: "ListItem", 50008: "List", 50009: "Menu", 50011: "MenuItem", 50017: "StatusBar",
                  50019: "TabItem", 50020: "Text", 50021: "ToolBar", 50024: "TreeItem", 50025: "Custom",
@@ -270,6 +240,7 @@ AUTO_GET_ROOT = 5               # IUIAutomation::GetRootElement
 AUTO_CONTROL_WALKER = 14        # IUIAutomation::get_ControlViewWalker
 AUTO_TRUE_CONDITION = 21        # IUIAutomation::CreateTrueCondition
 AUTO_PROPERTY_CONDITION = 23    # IUIAutomation::CreatePropertyCondition
+AUTO_PROPERTY_CONDITION_EX = 24 # IUIAutomation::CreatePropertyConditionEx
 AUTO_OR_CONDITION = 28          # IUIAutomation::CreateOrCondition
 EL_SET_FOCUS = 3                # IUIAutomationElement::SetFocus
 EL_FIND_FIRST = 5               # IUIAutomationElement::FindFirst
@@ -299,20 +270,18 @@ class WindowsTeams:
 
     PID_CACHE_SECONDS = 30.0
     BAR_RETRY_SECONDS = 3.0      # looking for the sharing bar lists every window: not on every read
-    CAMERA_SECONDS = 10.0        # how often Teams' saved camera is looked at again
 
     def __init__(self):
         self._uia = None                 # IUIAutomation
         self._mic_condition = None       # AutomationId == microphone-button
         self._controls_condition = None  # AutomationId is one of the call buttons or the call clock
-        self._read_condition = None      # ... or the element is an image (the video tiles)
+        self._read_condition = None      # ... or an image (the video tiles), or named Stop sharing
+        self._stop_condition = None      # named Stop sharing, for pressing it
         self._button_condition = None
         self._true_condition = None
         self._window = None              # the call window, kept between reads (never the buttons: see above)
         self._bar = None                 # the sharing control bar's window, while you share
         self._bar_next = 0.0
-        self._camera = ("", 0.0)         # (name, when to look again)
-        self._camera_file = (None, "")   # (cmd_settings.json's mtime, the camera's instance id)
         self._pids: dict[int, bool] = {}
         self._pids_at = 0.0
         self.note = ""
@@ -336,20 +305,22 @@ class WindowsTeams:
         self._mic_condition = self._property_condition(UIA_AUTOMATION_ID, MIC_BUTTON)
         self._controls_condition = self._either([self._property_condition(UIA_AUTOMATION_ID, i) for i in ids])
         self._read_condition = self._either([self._property_condition(UIA_AUTOMATION_ID, i) for i in ids]
-                                            + [self._property_condition(UIA_CONTROL_TYPE, UIA_IMAGE)])
+                                            + [self._property_condition(UIA_CONTROL_TYPE, UIA_IMAGE),
+                                               self._stop_sharing_condition()])
+        self._stop_condition = self._stop_sharing_condition()
         self._button_condition = self._property_condition(UIA_CONTROL_TYPE, UIA_BUTTON)
         cond = c_void_p()
         if self._uia.call(AUTO_TRUE_CONDITION, (POINTER(c_void_p), byref(cond))) >= 0 and cond:
             self._true_condition = Interface(cond)
-        if not all((self._mic_condition, self._controls_condition, self._read_condition, self._button_condition,
-                    self._true_condition)):
+        if not all((self._mic_condition, self._controls_condition, self._read_condition, self._stop_condition,
+                    self._button_condition, self._true_condition)):
             self.note = "Couldn't build UI Automation search conditions"
             self.close()
             return False
         self.note = ""
         return True
 
-    def _property_condition(self, prop: int, value):
+    def _property_condition(self, prop: int, value, flags: int = 0):
         v = VARIANT()
         if isinstance(value, str):
             v.vt, v.value = VT_BSTR, _oleaut32.SysAllocString(value)
@@ -357,11 +328,22 @@ class WindowsTeams:
             v.vt, v.value = VT_I4, int(value)
         cond = c_void_p()
         try:
-            hr = self._uia.call(AUTO_PROPERTY_CONDITION, (c_int, prop), (VARIANT, v), (POINTER(c_void_p), byref(cond)))
+            if flags:
+                hr = self._uia.call(AUTO_PROPERTY_CONDITION_EX, (c_int, prop), (VARIANT, v), (c_int, flags),
+                                    (POINTER(c_void_p), byref(cond)))
+            else:
+                hr = self._uia.call(AUTO_PROPERTY_CONDITION, (c_int, prop), (VARIANT, v),
+                                    (POINTER(c_void_p), byref(cond)))
         finally:
             if v.vt == VT_BSTR and v.value:
                 _oleaut32.SysFreeString(v.value)     # the condition keeps its own copy
         return Interface(cond) if hr >= 0 and cond else None
+
+    def _stop_sharing_condition(self):
+        """Name contains 'stop sharing', any capitals; just 'Stop sharing' where Windows can't match part of a
+        name. is_stop_sharing() then checks the name starts with it."""
+        return (self._property_condition(UIA_NAME, "stop sharing", IGNORE_CASE | MATCH_SUBSTRING)
+                or self._property_condition(UIA_NAME, "Stop sharing", IGNORE_CASE))
 
     def _either(self, conditions: list):
         """a OR b OR ...: one search then finds everything we read. Releases the conditions it's given."""
@@ -480,21 +462,32 @@ class WindowsTeams:
         return teams
 
     def _controls_in(self, window, tiles: bool = False):
-        """({AutomationId: element} for the call buttons and clock, [the video tiles' names]), from one search.
-        Without `tiles` the images aren't searched for."""
-        found, tile_names = {}, []
+        """({AutomationId: element} for the call buttons and clock, [(control type, name)] of the video tiles and
+        any other Stop sharing button), from one search. Without `tiles` only the buttons and clock are looked for."""
+        found, others = {}, []
         wanted = set(CONTROLS.values()) | {CALL_CLOCK}
         for el in self._find_all(window, TREE_DESCENDANTS, self._read_condition if tiles else self._controls_condition):
             automation_id = self._text(el, EL_AUTOMATION_ID)
             if automation_id in wanted and automation_id not in found:
                 found[automation_id] = el
                 continue
-            if tiles and self._int(el, EL_CONTROL_TYPE) == UIA_IMAGE:
-                name = self._text(el, EL_NAME)
-                if name:
-                    tile_names.append(name)
+            if tiles:
+                kind, name = self._int(el, EL_CONTROL_TYPE), self._text(el, EL_NAME)
+                if name and (kind == UIA_IMAGE or (kind == UIA_BUTTON and is_stop_sharing(name))):
+                    others.append((kind, name))
             el.release()
-        return found, tile_names
+        return found, others
+
+    def _stop_button(self, window):
+        """Whichever Stop sharing button Teams shows in the call window: share-button first."""
+        buttons = self._find_all(window, TREE_DESCENDANTS, self._stop_condition)
+        chosen = None
+        for b in sorted(buttons, key=lambda b: self._text(b, EL_AUTOMATION_ID) != SHARE_BUTTON):
+            if chosen is None and self._int(b, EL_CONTROL_TYPE) == UIA_BUTTON and is_stop_sharing(self._text(b, EL_NAME)):
+                chosen = b
+            else:
+                b.release()
+        return chosen
 
     @staticmethod
     def _release_all(elements: dict):
@@ -502,11 +495,12 @@ class WindowsTeams:
             el.release()
 
     def _find_call(self, tiles: bool = False):
-        """(call window or None, {AutomationId: element}, [tile names], whether any Teams window exists)."""
+        """(call window or None, {AutomationId: element}, [(type, name)] of tiles and other Stop sharing buttons,
+        whether any Teams window exists)."""
         if self._window is not None:
-            controls, tile_names = self._controls_in(self._window, tiles)
+            controls, others = self._controls_in(self._window, tiles)
             if MIC_BUTTON in controls:
-                return self._window, controls, tile_names, True
+                return self._window, controls, others, True
             self._release_all(controls)
             self._window.release()
             self._window = None
@@ -523,8 +517,8 @@ class WindowsTeams:
         if call is None:
             return None, {}, [], bool(windows)
         self._window = call
-        controls, tile_names = self._controls_in(call, tiles)
-        return call, controls, tile_names, True
+        controls, others = self._controls_in(call, tiles)
+        return call, controls, others, True
 
     def _elapsed(self, clock) -> int | None:
         """Seconds on Teams' call clock. Its name ('Elapsed time 04:04') is updated less often than the text
@@ -578,29 +572,11 @@ class WindowsTeams:
         self._bar_next = 0.0
         return ""
 
-    def _camera_device(self) -> str:
-        """The name of the camera Teams saved as its choice, if it's plugged in. Teams falls back to another
-        camera when it isn't, and doesn't say which, so then this is ''."""
-        name, next_look = self._camera
-        if time.monotonic() < next_look:
-            return name
-        path = os.path.join(teams_settings_folder(), "cmd_settings.json")
-        try:
-            mtime = os.path.getmtime(path)
-            if mtime != self._camera_file[0]:
-                with open(path, encoding="utf-8", errors="replace") as fh:
-                    self._camera_file = (mtime, instance_id(camera_setting(fh.read())))
-            name = device_name(self._camera_file[1])
-        except OSError:
-            name = ""
-        self._camera = (name, time.monotonic() + self.CAMERA_SECONDS)
-        return name
-
     # ---- the backend interface
     def read(self) -> TeamsState:
         if not self._ready():
             return TeamsState(available=False, note=self.note)
-        window, controls, tile_names, running = self._find_call(tiles=True)
+        window, controls, others, running = self._find_call(tiles=True)
         try:
             if MIC_BUTTON not in controls:
                 self._forget_bar()
@@ -611,7 +587,9 @@ class WindowsTeams:
                 elapsed = self._elapsed(controls[CALL_CLOCK])
                 if elapsed is not None:
                     started = time.monotonic() - elapsed
-            hand = next((h for h in map(hand_from_tile, tile_names) if h is not None), None)
+            tiles = [name for kind, name in others if kind == UIA_IMAGE]
+            content_shared = any(kind == UIA_BUTTON for kind, _name in others)   # its own Stop sharing button
+            hand = next((h for h in map(hand_from_tile, tiles) if h is not None), None)
             if hand is None and HAND_BUTTON in controls:
                 hand = self._pressed(controls[HAND_BUTTON])
             meeting = meeting_from_title(self._text(window, EL_NAME)) if window is not None else ""
@@ -619,14 +597,17 @@ class WindowsTeams:
             self._release_all(controls)
         sharing = parse_share_name(names.get(SHARE_BUTTON, ""))
         shared = self._shared() if sharing else self._forget_bar()
+        if content_shared:
+            sharing = True
         return TeamsState(available=True, running=True, in_call=True, muted=parse_mic_name(names[MIC_BUTTON]),
                           camera=parse_camera_name(names.get(CAMERA_BUTTON, "")), sharing=sharing, hand=hand,
-                          shared=shared, meeting=meeting, camera_device=self._camera_device(), started=started,
+                          shared=shared, meeting=meeting, started=started,
                           names=tuple(sorted(names.items())), read_at=time.monotonic())
 
     def press(self, control: str = "mic", focus: bool = False):
-        """Press one of the call buttons. With `focus`, bring the call window forward first (for a button
-        that opens something there, such as Share's picker)."""
+        """Press one of the call buttons, or STOP_SHARE for whichever Stop sharing button Teams shows. With
+        `focus`, bring the call window forward first (for a button that opens something there, such as Share's
+        picker)."""
         if not self._ready():
             return False, self.note
         automation_id = CONTROLS.get(control, control)
@@ -634,9 +615,15 @@ class WindowsTeams:
         try:
             if MIC_BUTTON not in controls:
                 return False, "Not in a Teams call"
-            button = controls.get(automation_id)
+            if control == STOP_SHARE:
+                button = self._stop_button(window) if window is not None else None
+                if button is not None:
+                    controls["_stop"] = button             # released with the rest below
+            else:
+                button = controls.get(automation_id)
             if button is None:
-                return False, "Teams' %s button isn't there" % control
+                return False, ("Teams isn't showing a Stop sharing button" if control == STOP_SHARE
+                               else "Teams' %s button isn't there" % control)
             if focus and window is not None:
                 window.call(EL_SET_FOCUS)              # best effort: Windows may refuse to change the foreground
             for pattern_id, iid, slot in ((UIA_INVOKE, IID_InvokePattern, INVOKE),
@@ -674,7 +661,8 @@ class WindowsTeams:
                     continue
                 mic.release()
                 started = time.perf_counter()
-                controls, tile_names = self._controls_in(w, tiles=True)
+                controls, others = self._controls_in(w, tiles=True)
+                tile_names = [name for kind, name in others if kind == UIA_IMAGE]
                 lines.append("    call buttons, clock and video tiles found in %.0f ms (one search)"
                              % ((time.perf_counter() - started) * 1000))
                 try:
@@ -689,6 +677,9 @@ class WindowsTeams:
                             "raised" if hand_from_tile(name) else "down") if hand_from_tile(name) is not None else ""))
                     if not tile_names:
                         lines.append("      video tiles: none on screen")
+                    for kind, name in others:
+                        if kind == UIA_BUTTON:
+                            lines.append("      another Stop sharing button: %r" % name)
                     for aid, el in sorted(controls.items()):
                         patterns = [label for pid, iid, label in ((UIA_INVOKE, IID_InvokePattern, "Invoke"),
                                                                    (UIA_TOGGLE, IID_TogglePattern, "Toggle"),
@@ -778,12 +769,10 @@ class WindowsTeams:
         windows = self._teams_windows()
         try:
             for w in windows:
-                if self._text(w, EL_CLASS_NAME) != "TeamsWebView":
-                    continue
                 count[0] = 0
                 started = time.perf_counter()
                 lines.append("=" * 100)
-                lines.append("window %r" % self._text(w, EL_NAME))
+                lines.append("window %r  class %r" % (self._text(w, EL_NAME), self._text(w, EL_CLASS_NAME)))
                 node(w, 0)
                 lines.append("(%d elements%s, %.1f s)" % (count[0], ", stopped at the limit"
                                                           if count[0] >= max_nodes else "",
@@ -796,7 +785,7 @@ class WindowsTeams:
 
     def close(self):
         for attr in ("_window", "_bar", "_mic_condition", "_controls_condition", "_read_condition",
-                     "_button_condition", "_true_condition", "_uia"):
+                     "_stop_condition", "_button_condition", "_true_condition", "_uia"):
             obj = getattr(self, attr)
             if obj is not None:
                 try:
@@ -849,7 +838,7 @@ def report(reads: int = 3, gap: float = 1.0) -> str:
             lines.append("")
             lines.extend(backend.describe())
         lines.append("")
-        lines.extend(devices_report())
+        lines.extend(settings_report())
         lines.append("")
         lines.extend(cameras_report())
         lines += ["", "Nothing was pressed or changed." if seen_call else
@@ -874,34 +863,19 @@ def tree_report() -> str:
         backend.close()
 
 
-def devices_report() -> list[str]:
-    """Where Teams is playing and recording (Windows' audio sessions), and the devices in Teams' own settings."""
-    if not IS_WIN:
-        return ["Audio sessions: only listed on Windows."]
-    from .audio import WindowsAudio
-    try:
-        lines = WindowsAudio().sessions_report("teams")
-    except Exception as e:
-        lines = ["Audio sessions: couldn't list them (%s)" % e]
+def settings_report() -> list[str]:
+    """The device entries in Teams' own settings file, exactly as written there. Shown for reference, not used."""
     path = os.path.join(teams_settings_folder(), "cmd_settings.json")
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
             text = fh.read()
     except OSError as e:
-        return lines + ["Teams' cmd_settings.json: can't read it (%s)" % e]
+        return ["Teams' cmd_settings.json: can't read it (%s)" % e]
     key = re.compile(r'"([A-Za-z_]*(?:[Cc]amera|[Mm]icrophone|[Ss]peaker|[Rr]inger|[Dd]evice|[Aa]udio)[A-Za-z_]*)"'
                      r'\s*:\s*("(?:[^"\\]|\\.){0,200}"|true|false|-?\d+)')
     found = sorted({"%s: %s" % m.groups() for m in key.finditer(text)})
-    lines.append("Device settings in Teams' cmd_settings.json: %s" % ("none" if not found else ""))
-    lines.extend("  " + f for f in found[:40])
-    camera = instance_id(camera_setting(text))
-    if camera:
-        present = device_name(camera)
-        lines.append("Teams' saved camera: %s" % (
-            "%s (plugged in; the camera key shows this)" % present if present else
-            "%s, which isn't plugged in now, so Teams is using another camera and won't say which"
-            % (device_name(camera, present_only=False) or camera)))
-    return lines
+    return ["Device entries in Teams' cmd_settings.json (as written; not used): %s" % ("none" if not found else "")] \
+        + ["  " + f for f in found[:40]]
 
 
 def cameras_report() -> list[str]:
@@ -1107,7 +1081,7 @@ class TeamsMonitor(QObject):
             # Share opens Teams' picker: what to share is chosen there, so there's nothing to wait for here.
             ok, message = self.backend.press(control, focus=True)
             return (True, "Teams' share picker is open") if ok else (False, message)
-        ok, message = self.backend.press(control)
+        ok, message = self.backend.press(STOP_SHARE if field_name == "sharing" else control)
         if not ok:
             return False, message
         deadline = time.monotonic() + self.CONFIRM_SECONDS

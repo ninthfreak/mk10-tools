@@ -24,7 +24,8 @@ USAGE = """examples:
   launch.pyw page Browser         switch the running app to a page
   launch.pyw message "Build done" 3   show a message on the small screen for 3 seconds
   launch.pyw nowplaying           print what this PC says is playing, and exit (a check, not a command)
-  launch.pyw teams                print what Teams shows (call, mute, its buttons), and exit; presses nothing"""
+  launch.pyw teams                print what Teams shows (call, mute, its buttons), and exit; presses nothing
+  launch.pyw teams 15             the same, after 15 seconds to open something in Teams (its device menu)"""
 
 
 def server_name() -> str:
@@ -122,25 +123,32 @@ def run_nowplaying_report() -> int:
     return _print_report(report(), "nowplaying-report.txt")
 
 
-def run_teams_report() -> int:
+def run_teams_report(wait: int = 0) -> int:
     """Print what Teams exposes to UI Automation, and save it, plus the whole accessibility tree in its own
-    timestamped file (it holds the names of people in the meeting). Read-only: nothing is pressed."""
+    timestamped file (it holds the names of people in the meeting). Read-only: nothing is pressed. `wait`
+    seconds first leave time to open a menu in Teams so that it's in the tree."""
     import time
     from .system.teams import report, tree_report
-    text = report()
-    if sys.stdout is not None:
-        try:
-            print("Reading the whole Teams window as well; that takes a few seconds...", flush=True)
-        except (OSError, ValueError):
-            pass
+
+    def say(line):
+        if sys.stdout is not None:
+            try:
+                print(line, flush=True)
+            except (OSError, ValueError):
+                pass
+
+    for left in range(wait, 0, -1):
+        say("Reading Teams in %d s..." % left)
+        time.sleep(1)
+    say("Reading the whole Teams window first (an open menu may not stay open); that takes a few seconds...")
     tree_path = config_dir() / ("teams-tree-%s.txt" % time.strftime("%Y%m%d-%H%M%S"))
     try:
         config_dir().mkdir(parents=True, exist_ok=True)
         tree_path.write_text(tree_report(), encoding="utf-8")
-        text += "\n\nThe whole tree (it includes the names of people in the meeting) is in:\n%s" % tree_path
+        where = "\n\nThe whole tree (it includes the names of people in the meeting) is in:\n%s" % tree_path
     except Exception as e:
-        text += "\n\n(Couldn't read or save the whole tree: %s)" % e
-    return _print_report(text, "teams-report.txt")
+        where = "\n\n(Couldn't read or save the whole tree: %s)" % e
+    return _print_report(report() + where, "teams-report.txt")
 
 
 def _print_report(text: str, filename: str) -> int:
@@ -203,7 +211,8 @@ def main(argv=None):
     if ns.command == "nowplaying":
         return run_nowplaying_report()      # a local check; it needs no window and no running copy
     if ns.command == "teams":
-        return run_teams_report()
+        wait = int(ns.args[0]) if ns.args and ns.args[0].isdigit() else 0
+        return run_teams_report(min(wait, 120))
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_NAME)
