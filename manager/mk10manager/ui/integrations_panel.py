@@ -33,11 +33,21 @@ class TeamsSettings(QWidget):
                              "and can't be put right, the live one is muted, never the other way round. Outside "
                              "a call nothing is touched.")
         self.status = _muted("")
-        lay.addWidget(self.sync)
+        backend = getattr(ctl.teams, "backend", None)
+        if ctl.teams.sync_safe:
+            lay.addWidget(self.sync)
+        else:
+            self.sync.setVisible(False)
         lay.addWidget(self.status)
-        if not isinstance(getattr(ctl.teams, "backend", None), teams_mod.NullTeams):
-            lay.addWidget(_muted("Read with: %s. Teams has to be in English."
-                                 % teams_mod.describe_backend(getattr(ctl.teams, "backend", None))))
+        if not isinstance(backend, teams_mod.NullTeams):
+            lay.addWidget(_muted("Read with: %s.%s" % (teams_mod.describe_backend(backend),
+                                                      " Teams has to be in English." if teams_mod.IS_WIN else "")))
+        if not ctl.teams.sync_safe:
+            lay.addWidget(_muted("teams-for-linux needs its D-Bus control switched on: \"dbusControl\": "
+                                 "{\"enabled\": true} in its config.json, then restart it. The PC microphone isn't "
+                                 "kept in step with it: it judges “muted” from the call's sound, so a microphone "
+                                 "muted on the PC already reads as muted there, and following each other could "
+                                 "leave you muted."))
         self.sync.toggled.connect(self._sync)
         ctl.teams.changed.connect(self.show_state)
         self.reload()
@@ -49,15 +59,16 @@ class TeamsSettings(QWidget):
     def show_state(self):
         t = self.ctl.teams.state
         if isinstance(getattr(self.ctl.teams, "backend", None), teams_mod.NullTeams):
-            text = "Only on Windows for now. Teams for Linux has a control interface this could use later."
+            text = "Not available on this system: it needs Windows, or Linux with teams-for-linux."
         elif not t.available:
             text = t.note or "Can't read Teams."
         elif not t.running:
-            text = "Now: Teams isn't open."
+            text = "Now: " + (t.note or "Teams isn't open.")
         elif not t.in_call:
             text = "Now: Teams is open, not in a call."
         elif t.muted is None:
-            text = "Now: in a call; can't tell if you're muted (the button says “%s”)." % t.button_name
+            text = "Now: in a call; Teams' mute state isn't known%s." % (
+                " (the button says “%s”)" % t.button_name if t.button_name else "")
         else:
             text = "Now: in %s, %s" % ("“%s”" % t.meeting if t.meeting else "a call", "muted" if t.muted else "live")
             if t.camera is not None:

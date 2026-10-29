@@ -52,7 +52,7 @@ class FakeTeams:
                               shared=self.shared if self.sharing else "", meeting=self.meeting, started=started,
                               names=tuple(sorted(names.items())), read_at=now)
 
-    def press(self, control="mic", focus=False):
+    def press(self, control="mic", focus=False, want=None):
         with self.lock:
             self.presses.append(control)
             if focus:

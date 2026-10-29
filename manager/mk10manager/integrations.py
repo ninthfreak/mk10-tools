@@ -42,8 +42,8 @@ INTEGRATIONS = (
                 conditions=("slack_huddle", "slack_dnd", "slack_presence", "slack_unread"),
                 faces=("slack",), templates=("slack",), placeholders=("slack_",)),
     Integration("teams", "Microsoft Teams",
-                "In a call, muted, camera and sharing, read from what the Teams window shows; mute, camera and "
-                "sharing keys. Windows only for now.",
+                "In a call, muted, camera and sharing; mute, camera and sharing keys. On Windows it reads what "
+                "the Teams window shows; on Linux it uses teams-for-linux's own control interface.",
                 actions=("teams",),
                 conditions=("teams_call", "teams_muted", "teams_camera", "teams_sharing", "teams_hand"),
                 faces=("teams",), templates=("teams",), placeholders=("teams_",)),

@@ -624,7 +624,8 @@ class TeamsFace(SlackFace):
         if teams is None or not teams.available:
             rows.append(("TEAMS", ((teams.note if teams else "") or "can't be read")[:40], GREY, False))
         elif in_call:
-            rows.append(("CALL", format_track_time(teams.call_seconds()), accent, False))
+            rows.append(("CALL", format_track_time(teams.call_seconds()) if teams.clock_known else "Yes",
+                         accent, False))
         else:
             rows.append(("CALL", "None" if teams.running else "Teams closed", GREY, False))
 

@@ -166,7 +166,7 @@ It never offered participant count, who is speaking, or which audio devices Team
 | Route | Gives | Costs | Works on |
 |---|---|---|---|
 | UI Automation scraping (what MuteDeck does now) — **built, see below** | mute, camera, in-a-call; roster count with effort | breaks on Teams UI changes, language-dependent | Windows |
-| `teams-for-linux` (Electron wrapper) MQTT / D-Bus | a status object (mic, camera), plus toggle-mute / toggle-video / raise-hand commands | you run their wrapper instead of the PWA; their own issue tracker shows mute detection breaking against current Teams | Linux |
+| `teams-for-linux` (Electron wrapper) MQTT / D-Bus — **built for Linux, see below** | a status object (mic, camera, sharing, in a call), plus mute / unmute / toggle-video / raise-hand commands | you run their client instead of the PWA; its mute comes from the call's audio, not Teams' button | Linux |
 | Graph `/me/presence` | availability and activity (`InAMeeting`, `InACall`, `Presenting`) | Entra app registration; delegated `Presence.Read`, or `Presence.Read.All` for change notifications (1-hour subscriptions, renewed by PATCH); no personal accounts; a work tenant will probably want admin consent | anywhere |
 | Graph Communications calling bot | live roster **and** active speaker | an Azure-hosted bot with application permissions and admin consent, which **joins the meeting as a visible participant** | anywhere, but socially unacceptable at a desk |
 | Teams **app platform** (apps that run *inside* Teams — see below) | meeting start/end and participant join/leave events, meeting details, "someone is speaking", and the active-speaker list under RSC | a Teams app package installed in the meeting or chat, a bot with a public HTTPS endpoint for the server-side half, and a relay you host to get any of it back to the desktop | anywhere, but it's a cloud service, not a local read |
@@ -692,3 +692,31 @@ Entirely unexplored; nothing here has looked for an open port.
 | `probe/mk10probe.py` | Used on the real device (probe, storage, show-test). The device went from V2.29 to V2.32, most likely through ScreenKey; the `update` command hasn't been used on real hardware |
 | `opendeck-plugin/` | Works on the real device on Windows (keys, brightness, clock on the small screen) |
 | `manager/` | First version. Tested only against a fake MK10 on Linux; not yet on real hardware or Windows |
+
+## teams-for-linux's D-Bus control (read 29 October 2026, built the same day, untested on a real desktop)
+
+Chosen over reading Teams' window through AT-SPI because it's a maintained, pre-built interface: keeping up with
+Teams is teams-for-linux's job. Released about weekly (v2.20.0 on 3 September to v2.28.0 on 25 October 2026);
+the D-Bus control arrived in v2.25.0 (9 October), so it's young.
+
+- Off by default: `"dbusControl": {"enabled": true}` in its `config.json`, then restart. A profile can set its own
+  `busName` (`…teams_for_linux.Work`); the Manager finds any name starting with the default one and prefers the
+  instance in a call. Snap confinement may refuse the name; Flatpak uses its app ID.
+- `GetState() -> s`, a JSON snapshot: `inCall`, `cameraEnabled`, `screenSharing`, `microphoneState` (speaking,
+  silent, muted, off, unknown), `microphoneControlState` (muted, unmuted, off, unknown), presence and incoming
+  call. Its own docs: "All values are observations, not server-confirmed Teams state."
+- `Mute(b force)` / `Unmute(b force)` send Teams' Ctrl+Shift+M only when its reading disagrees (force is needed
+  when the state is unknown; the Manager never forces). `true` means sent, not acknowledged, so the Manager reads
+  again to confirm. `ToggleVideo`, `ToggleHandRaise`, `LeaveCall`, `AcceptAudio`, `AcceptVideo`, `DeclineCall`.
+  Signals mirror the snapshot (`StateChanged`, `MicrophoneControlChanged`, …); the Manager polls `GetState`.
+- **How it decides "muted"** (`app/browser/tools/speakingIndicator.js`): WebRTC `getStats()` every 150 ms. The
+  outgoing track missing, disabled, muted or not sending counts as muted; otherwise an audio level under 0.0001
+  for three polls (about 450 ms) counts as muted. Its own comment: a microphone with its own noise reduction "can
+  also read zero while unmuted and quiet". So a microphone muted at the OS reads as muted too, which is why
+  `TeamsForLinux.SYNC_SAFE` is False and the PC microphone isn't synced with it: following a false "muted" would
+  mute the real microphone, and then silence would keep it reading muted.
+- Not available from it: meeting name, call clock, hand state, what's shared, devices, stopping a share. Those
+  stay blank on Linux; nothing is filled in from elsewhere.
+- Called through `busctl --user --json=short`, as its docs do. PySide6's QtDBus works too, but its blocking call
+  holds Python's GIL for the whole wait (measured: another thread got 1 tick in a 1-second call), so a slow
+  answer would freeze the window. busctl as a subprocess takes about 11 ms a call and blocks nothing.

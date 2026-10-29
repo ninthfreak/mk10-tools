@@ -140,6 +140,8 @@ def run_teams_report(wait: int = 0) -> int:
     for left in range(wait, 0, -1):
         say("Reading Teams in %d s..." % left)
         time.sleep(1)
+    if not sys.platform.startswith("win"):
+        return _print_report(report(), "teams-report.txt")      # teams-for-linux: no window tree to read
     say("Reading the whole Teams window first (an open menu may not stay open); that takes a few seconds...")
     tree_path = config_dir() / ("teams-tree-%s.txt" % time.strftime("%Y%m%d-%H%M%S"))
     try:

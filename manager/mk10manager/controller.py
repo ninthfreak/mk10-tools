@@ -297,7 +297,7 @@ class Controller(QObject):
 
     def _sync_mic(self):
         """During a Teams call, keep the PC microphone's mute and Teams' mute the same (see micsync.py)."""
-        if not self.config.settings.get("teams_sync_mic", True):
+        if not self.config.settings.get("teams_sync_mic", True) or not getattr(self.teams, "sync_safe", True):
             self.micsync.reset()
             return
         audio = self.audio.state

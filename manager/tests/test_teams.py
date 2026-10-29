@@ -1,6 +1,7 @@
 """Teams: reading the mic button, explicit mute on / off that checks before and after, and the wiring into keys,
 rules, placeholders and actions. The UI Automation reader itself needs Windows; these drive a fake one."""
 
+import sys
 import time
 from dataclasses import replace
 
@@ -49,11 +50,11 @@ def test_the_button_name_says_muted_or_live(name, muted):
     assert parse_mic_name(name) is muted
 
 
-def test_off_windows_it_says_why():
-    if teams_mod.IS_WIN:
-        pytest.skip("this checks the fallback")
-    s = teams_mod.make_backend().read()
-    assert not s.available and "Windows" in s.note
+def test_where_teams_cant_be_read_it_says_why():
+    s = teams_mod.NullTeams().read()
+    assert not s.available and "Windows" in s.note and "teams-for-linux" in s.note
+    if sys.platform.startswith("linux"):
+        assert type(teams_mod.make_backend()).__name__ == "TeamsForLinux"
 
 
 # ---------------------------------------------------------------- explicit commands
@@ -327,13 +328,21 @@ def test_camera_commands(qapp, mon):
 
 def test_the_call_clock_and_meeting(qapp, mon):
     m, fake = mon
-    fake.join()
+    fake.join(elapsed=40)
     assert wait_until(qapp, lambda: m.state.in_call, 2)
     since = m.state.call_since
-    assert since and m.state.meeting == "Weekly sync"
+    assert since and m.state.clock_known and m.state.meeting == "Weekly sync"
     fake.muted = True
     assert wait_until(qapp, lambda: m.state.muted is True, 2)
-    assert m.state.call_since == since, "the clock keeps running through changes"
+    assert abs(m.state.call_since - since) < 1.0, "the clock keeps running through changes"
+
+
+def test_without_teams_own_clock_the_time_is_unknown(qapp, mon):
+    m, fake = mon
+    fake.join()                                     # no call clock (teams-for-linux has none)
+    assert wait_until(qapp, lambda: m.state.in_call, 2)
+    assert not m.state.clock_known and m.state.call_since == 0.0, "never a time counted from when we noticed"
+    assert expand("[{teams_time}]", RenderContext(teams=m.state)) == "[]"
 
 
 def test_more_conditions_and_placeholders():

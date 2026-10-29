@@ -124,7 +124,16 @@ reader does (Windows UI Automation): the in-call mic button and its name, "Mute 
 that same button, so Teams doesn't need focus and no shortcut is sent. The approach comes from
 [shuush](https://github.com/supermem613/shuush) (MIT), which worked out that contract against the new Teams.
 
-- **Windows only.** Teams on Linux runs in a browser; that isn't read yet.
+- **On Linux** it uses [teams-for-linux](https://github.com/IsmaelMartinez/teams-for-linux), a maintained Teams
+  client with its own control interface, so keeping up with Teams is its job. Switch that interface on in its
+  `config.json` with `"dbusControl": {"enabled": true}` and restart it. It reports in a call, muted, camera and
+  screen sharing, and takes mute, unmute, camera and raise-hand commands. It doesn't report the meeting's name,
+  the call time or what's shared, and can't stop sharing, so those stay blank there.
+  - teams-for-linux judges "muted" from the call's sound, not Teams' button: a quiet microphone with its own
+    noise gate can read as muted, and so does a microphone muted on the PC. That's why the PC microphone isn't
+    kept in step with Teams on Linux.
+  - `./run-linux.sh teams` prints what it reports.
+  - Teams in a plain browser isn't read.
 - **English Teams only**, for now: the state comes from the button's name. In another language the keys show
   "in a call" but not muted or live, and *Mute me* / *Unmute me* refuse to press.
 - If a Teams update renames the buttons, the keys stop changing. Double-click **`teams-windows.bat`** (or run

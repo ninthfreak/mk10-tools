@@ -35,7 +35,7 @@ HELP_LINES = (
     ("teams", "{teams_call}  “in a call”, or nothing      {teams_mic}  “muted” / “live” in a Teams call"),
     ("teams", "{teams_mic:Muted|Live}  your own two words"),
     ("teams", "{teams_camera}  {teams_sharing}  {teams_hand}  {teams_meeting}  {teams_time}  (how long the call "
-              "has run)"),
+              "has run, by Teams' own clock)"),
     ("teams", "{teams_shared}  what Teams' sharing bar says you're sharing (“your screen”), when it says"),
     (None, "{in_device:short}  {out_device:short}  just the part of the device name in brackets"),
 )
@@ -144,7 +144,7 @@ def _teams(name: str, arg, t: TeamsState) -> str:
     if name == "teams_meeting":
         return t.meeting
     if name == "teams_time":
-        return format_track_time(t.call_seconds())
+        return format_track_time(t.call_seconds()) if t.clock_known else ""
     if name not in TEAMS_WORDS:
         return "{%s}" % name
     field_name, yes, no = TEAMS_WORDS[name]

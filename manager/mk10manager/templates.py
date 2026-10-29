@@ -184,8 +184,9 @@ TEMPLATES = [
              "sharing, blue is live or on. The small screen shows the meeting, how long it's run, and the "
              "microphone, speakers, camera, sharing and raised hand.",
              teams_page,
-             setup=("Windows only, and Teams has to be in English: the keys read Teams' window the way a screen "
-                    "reader does.",
+             setup=("On Windows, Teams has to be in English: the keys read Teams' window the way a screen reader "
+                    "does. On Linux they need teams-for-linux with its D-Bus control switched on; there the share "
+                    "key can't stop sharing, and the meeting's name and the call time aren't known.",
                     "In a call the microphone key is Teams' mute and the PC microphone follows it (switch that off "
                     "on the Integrations tab). Outside a call it mutes the PC microphone.",
                     "The camera and share keys only work in a call. The share key stops sharing (a screen, a "
