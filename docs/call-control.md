@@ -224,3 +224,48 @@ Bluetooth headset.
   - **Difficulty 3/5 on top of this test, ~55–65%.**
   - Plugging the same dongle straight into the PC already gives a working (often certified) headset. The MK10
     in the middle is only worth it for the screen and keys showing the real call state of that headset.
+
+## Call control without the MK10 being the headset (researched October 2026)
+
+The MK10-as-audio-device idea is on the back burner. This is what HID telephony call control offers without it.
+
+### How the apps decide which device to listen to
+
+| App | Which HID device it uses | Evidence |
+|---|---|---|
+| Teams desktop (Windows) | **the one you picked as speaker and mic** | Q-SYS: its HID controls "will not function" unless its speakerphone is selected as both input and output; community reports of buttons only working once the headset is re-selected; one claim that Teams only answers certified models (unverified) |
+| Zoom desktop | the selected audio device, as Teams | Q-SYS, same page; Zoom also only accepts/declines incoming calls by HID, it can't hang up a live one |
+| Teams web / PWA (so Teams on Linux) | **none**: it never opened a telephony headset over WebHID, even mid-call | `teams-for-linux` issue 3151 (one EPOS DECT base, Chrome and Vivaldi) |
+| Google Meet (Chrome, Edge) | **the one you connect** in Meet's settings (Audio → Call control → Connect device), through WebHID | Google's help page; it recommends Meet-certified devices and warns others "might not work as expected" |
+
+So a HID box that isn't also the sound card is ignored by Teams and Zoom desktop (confidence ~80%). It is ignored by
+Teams on Linux too, but only because Teams there ignores all HID telephony. Meet is the exception.
+
+The USB-IF has defined usages for exactly the "separate call-control box" case:
+- **HUTRR106, Call State Management Control:** Generic Desktop collection 0x13, Call Active LED 0xE0, Call Mute
+  Toggle 0xE1, Call Mute LED 0xE2.
+- **HUTRR110, System Microphone Mute:** Generic Desktop 0xA9. Linux maps it to `KEY_MICMUTE`.
+
+A developer on Microsoft Q&A (April 2026) reports **Windows 11 does nothing with HUTRR106**: the toggle doesn't
+mute Teams and no LED report comes back. So that's a dead end for now.
+
+### What we can do
+
+| Route | Gives the MK10 | Needs | Difficulty | Confidence |
+|---|---|---|---|---|
+| **Win+Alt+K** from an MK10 key | Teams' own mute toggle, from anywhere: Windows 11's call-mute shortcut behind the taskbar mic button | nothing; it's a keystroke | 1/5 | ~80% for Teams; other apps only if they adopted Windows' call mute; no way found to *read* the state back |
+| **Listen to your real headset's lights** (USB capture) | in-call, muted, ringing, for every app that drives that headset (Teams, Zoom, Webex) | a USB HID headset you already use; Windows: USBPcap (signed driver, admin to install and admin for each capture, so an elevated helper); Linux: `usbmon` (root or a udev rule) | 3/5 | ~65%; read-only, it can't press the headset's buttons |
+| **Virtual HID headset on Linux** (`/dev/uhid`) for Meet | Meet's lights (in call, mute, ring) and buttons both ways | a udev rule for `/dev/uhid`; Chrome or Edge | 2/5 | ~50%: Meet may not accept an uncertified device |
+| **The MK10 itself as a HID device** | as above, but it's the MK10 | the kernel module or the move off the COM port (round 2), and for Teams/Zoom it would still have to be the sound card | 4/5 | Meet only, ~40% |
+| **Windows virtual HID** | as the Linux one | a signed kernel driver. `usbip-win2` upstream is test-signed only; the Alia5 fork says its drivers are Microsoft-signed; either way an admin install of a USB/IP stack | 4–5/5 | low on a work PC |
+
+`probe hid-list` (read-only, needs `hidapi`) lists this PC's HID devices, with call-control ones first. It answers
+the first question for the capture route: does the headset in use have a Telephony collection at all?
+
+Sources: [Q-SYS HID Conferencing](https://help.qsys.com/content/Schematic_Library/usb_telephony.htm),
+[teams-for-linux #3151](https://github.com/IsmaelMartinez/teams-for-linux/issues/3151),
+[Google Meet call controls](https://support.google.com/meet/answer/12562325),
+[HUTRR106](https://www.usb.org/sites/default/files/hutrr106-callstatemanagementcontrol_0.pdf),
+[Microsoft Q&A on HUTRR106/110](https://learn.microsoft.com/en-us/answers/questions/5860057/windows-support-for-usb-hid-hutrr110-(system-micro),
+[Linux HUTRR110 mapping](https://lkml.iu.edu/hypermail/linux/kernel/2212.1/05123.html),
+[usbip-win2](https://github.com/nefarius/usbip-win2), [Alia5 fork](https://github.com/Alia5/usbip-win2).

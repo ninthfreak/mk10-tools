@@ -31,6 +31,9 @@ Commands
   hid-install           Put the call-control test (sdcard-tools/hidtest) on the SD card and arm it for ONE
                         boot: the MK10 comes up as serial + HID headset + sound card, then the boot after is
                         back to normal. Asks you to type INSTALL first. THIS WRITES TO THE DEVICE.
+  hid-list              Read-only: every HID device this PC sees, with the ones a meeting app can use for call
+                        control (Telephony page, or the newer HUTRR106 call-state collection) listed first.
+                        Needs: pip install hidapi
   hid                   Call-control test: list the MK10's HID collections, show the lights a meeting app sets
                         (off-hook, mute, ring, hold), send hook/mute presses, fetch the device's log. Uses HID,
                         not the serial port, so MK10 Manager can stay open. Needs: pip install hidapi
@@ -2317,6 +2320,64 @@ def _hid_explain_absent():
     print("     Power-cycling again puts everything back.")
 
 
+HID_PAGES = {0x01: "Generic Desktop", 0x07: "Keyboard", 0x08: "LEDs", 0x0B: "Telephony", 0x0C: "Consumer",
+             0x0D: "Digitizer", 0x0F: "Physical Interface", 0x20: "Sensors", 0x59: "Lighting"}
+HID_TELEPHONY = {0x01: "Phone", 0x02: "Answering Machine", 0x03: "Message Controls", 0x04: "Handset",
+                 0x05: "Headset", 0x06: "Telephony Key Pad", 0x07: "Programmable Button"}
+HID_DESKTOP = {0x02: "Mouse", 0x04: "Joystick", 0x05: "Gamepad", 0x06: "Keyboard", 0x07: "Keypad",
+               0x13: "Call State Management Control (HUTRR106)", 0x80: "System Control"}
+
+
+def describe_collection(page, usage):
+    """(text, kind): kind is "call" for a call-control collection, else None."""
+    if page == 0x0B:
+        return "Telephony / %s" % HID_TELEPHONY.get(usage, "0x%02X" % usage), "call"
+    if page == 0x01 and usage == 0x13:
+        return "Generic Desktop / %s" % HID_DESKTOP[0x13], "call"
+    if page >= 0xFF00:
+        return "vendor 0x%04X / 0x%02X" % (page, usage), None
+    name = HID_PAGES.get(page, "page 0x%04X" % page)
+    if page == 0x01:
+        return "%s / %s" % (name, HID_DESKTOP.get(usage, "0x%02X" % usage)), None
+    return "%s / 0x%02X" % (name, usage), None
+
+
+def hid_device_table(entries):
+    """Group hidapi entries into devices: [(vid, pid, maker, product, [(text, kind)...])], call-control first."""
+    devices = {}
+    for d in entries:
+        key = (d.get("vendor_id", 0), d.get("product_id", 0), d.get("manufacturer_string") or "",
+               d.get("product_string") or "")
+        found = devices.setdefault(key, [])
+        item = describe_collection(d.get("usage_page", 0), d.get("usage", 0))
+        if item not in found:
+            found.append(item)
+    rows = [(k[0], k[1], k[2], k[3], v) for k, v in devices.items()]
+    rows.sort(key=lambda r: (not any(kind == "call" for _, kind in r[4]), r[3].lower()))
+    return rows
+
+
+def cmd_hid_list(_args):
+    """Read-only: every HID device this PC sees, with the ones a meeting app can use for call control first."""
+    hid = _import_hid()
+    if not hid:
+        return 1
+    rows = hid_device_table(hid.enumerate(0, 0))
+    if not rows:
+        print("No HID devices listed. (On Linux, hidapi only sees hidraw nodes you may read; try sudo.)")
+        return 1
+    for vid, pid, maker, product, items in rows:
+        call = any(kind == "call" for _, kind in items)
+        print("%s %04X:%04X  %s%s" % ("CALL" if call else "    ", vid, pid, product or "(no name)",
+                                     "  - " + maker if maker else ""))
+        for text, kind in items:
+            print("              %s%s" % (text, "   <- call control" if kind == "call" else ""))
+    calls = [r for r in rows if any(kind == "call" for _, kind in r[4])]
+    print("\n%d device(s) with a call-control collection: %s" % (
+        len(calls), ", ".join(r[3] or "%04X:%04X" % (r[0], r[1]) for r in calls) or "none"))
+    return 0
+
+
 def cmd_hid(args):
     """Talk to the MK10's HID headset collections. Doesn't use the serial port, so MK10 Manager can stay open."""
     hid = _import_hid()
@@ -3200,6 +3261,8 @@ def main():
     p.add_argument("--no-audio", action="store_true", help="HID only, no sound card")
     p.add_argument("--arm-only", action="store_true", help="the files are already there: just arm the next boot")
     p.add_argument("--yes", action="store_true", help="don't ask first (it writes to the device)")
+    sub.add_parser("hid-list", help="read-only: list this PC's HID devices, call-control (telephony) ones "
+                                    "first (needs hidapi)")
     p = sub.add_parser("hid", help="call-control test: watch what a meeting app tells the MK10, press its "
                                    "buttons (no serial port needed; needs hidapi)")
     p.add_argument("--log-only", action="store_true", help="just fetch the device's test log")
@@ -3209,7 +3272,7 @@ def main():
         sys.stdout.reconfigure(errors="replace")
     except (AttributeError, ValueError):
         pass
-    if args.cmd not in ("selftest", "theme-strings", "unpack", "theme-dig", "theme-read", "theme-make-test", "hid"):
+    if args.cmd not in ("selftest", "theme-strings", "unpack", "theme-dig", "theme-read", "theme-make-test", "hid", "hid-list"):
         try:
             import serial  # noqa: F401
         except ImportError:
@@ -3220,7 +3283,7 @@ def main():
                "pixmap": cmd_pixmap, "files": cmd_files, "theme-strings": cmd_theme_strings,
                "unpack": cmd_unpack, "theme-dig": cmd_theme_dig, "theme-read": cmd_theme_read,
                "theme-make-test": cmd_theme_make_test, "sysdata": cmd_sysdata, "reload": cmd_reload,
-               "upload": cmd_upload, "delete": cmd_delete, "hid": cmd_hid, "hid-install": cmd_hid_install}[args.cmd]
+               "upload": cmd_upload, "delete": cmd_delete, "hid": cmd_hid, "hid-install": cmd_hid_install, "hid-list": cmd_hid_list}[args.cmd]
     sys.exit(handler(args))
 
 
