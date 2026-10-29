@@ -4,3 +4,5 @@
 *.png binary
 *.gz binary
 sdcard-tools/* text eol=lf
+sdcard-tools/hidtest/*.sh text eol=lf
+sdcard-tools/hidtest/mk10hid binary

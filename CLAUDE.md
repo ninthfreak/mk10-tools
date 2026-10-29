@@ -2,7 +2,7 @@
 
 Unofficial software for the Waveshare MK10 (10 LCD keys + a 240×296 small screen, one 896×304 canvas, USB serial).
 Read `docs/protocol.md` before touching device code, `docs/theme-format.md` for the on-device theme
-format, and `docs/research-notes.md` for why things are the way they are.
+format, `docs/call-control.md` for the USB headset test, and `docs/research-notes.md` for why things are the way they are.
 
 ## Layout
 
@@ -49,6 +49,12 @@ format, and `docs/research-notes.md` for why things are the way they are.
     `setFileCRC`), defaulting to `/data/mk10probe/`; `delete PATH...` removes files. **Both write to the device**
     and ask you to type a word first. The probe refuses any write method until the running command unlocks it by
     name, so the read-only commands can't write by accident.
+  - `hid-install [--no-audio] [--arm-only]` **writes to the device** (one INSTALL confirmation): it puts the
+    call-control test on the card and arms one boot as serial + HID headset + sound card. `hid [--log-only]`
+    then talks to it over HID (needs `hidapi`; no serial port, so the Manager can stay open).
+    `docs/call-control.md` is the design. Tests: `python -m pytest -q sdcard-tools/hidtest` (needs a C compiler).
+  - The MK10's BusyBox (1.27.2) has no `setsid` or `nohup`. Check device scripts with its own ash:
+    `qemu-arm-static -L <device /lib> -0 sh busybox -n script.sh`.
 - **What's playing:** `manager/nowplaying-windows.bat` (double-click), `run-windows.bat nowplaying` or
   `./run-linux.sh nowplaying` prints what this PC reports (packages found, track, position, artwork) and
   saves it to `nowplaying-report.txt` in the settings folder. Use it rather than guessing when the Now
@@ -65,7 +71,8 @@ format, and `docs/research-notes.md` for why things are the way they are.
 - **Don't make the user pull the SD card.** The MK10's card slot spring may be wearing. Everything on the card
   can be reached without removing it: `saveToFile` (`probe upload`) writes `/mnt/SDCARD` and `/data` directly,
   and `lunch.sh` runs as root before the app starts. Prefer changes that revert themselves on the next boot —
-  `sdcard-tools/lunch-theme-test.sh` is the pattern.
+  `sdcard-tools/lunch-tests.sh` is the pattern: arm files for one boot, and for the USB test a bind mount
+  plus `/tmp`, which a reboot removes by itself.
 - Only one program can open the MK10's serial port. Quit OpenDeck, ScreenKey and MK10 Manager before using another.
 - **Ask the user first** before sending anything to a real device that writes or deletes files (`saveToFile`,
   `setFileCRC`, `deleteFiles`, V1 FILE_START/FILE_END outside `/data/mk10probe/`, DELETE_THEME) or updates firmware.

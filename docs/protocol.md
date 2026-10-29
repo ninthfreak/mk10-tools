@@ -210,7 +210,7 @@ acknowledgement with the same cmd number.
 |---|---|---|
 | 0 | FIND_DEVICE | Reply has `version`, `screen_width`, `screen_height`, `screen_model`, `deviceBl`, `deviceVolume` |
 | 1 | SEND_SYSTEM_DATA | `QMap<QString,QString>` of live-data name → value. The firmware's own names are Chinese (CPU, GPU, RAM, time), but **any name works**: a theme item bound to a made-up name shows what the host pushes under it (tested October 2026). **Acknowledged every time**, as a type-2 packet with the same cmd, in ~6 ms. Text items follow it at 20 a second with no backlog; arc gauges (type 109) did not move at all |
-| 2 | RELOAD | the firmware's `CMD_VALUE_SET_DEVICE_RELOAD`, handled by `SerialPort::device_set_load(reload_name)`: it carries a name. Payload format untested |
+| 2 | RELOAD | the firmware's `CMD_VALUE_SET_DEVICE_RELOAD`, handled by `SerialPort::device_set_load(reload_name)`: it carries a name. **Tried on a real V2.32 (October 2026) with the theme path as the key, as `reload_name`, and as `path`: no reply at all to any of them, and no change on screen.** The device answers what it acts on (live data is acknowledged every time), so silence means it didn't act. It may only reload a theme it installed itself — `/data/info/ThemeMessage` lists those, and the test theme isn't in it — or take some other layout. Unresolved |
 | 3 | GET_THEME | Theme files, plus `bytesTotal` and `bytesAvailable` in MB. On a device with no theme installed it returns the two sizes and nothing else (seen: 2648 MB total, 2598 MB free) |
 | 4 | SET_BL | Backlight |
 | 5 | SCAN_STATE | Acknowledged with an empty payload on a real V2.32 device |
@@ -259,7 +259,10 @@ and one with a bad one.
 - It has built-in theme widgets: analogue, digital and flip clocks, and an image-based clock made of a dial picture
   plus hand pictures with pivot points (`QGraphicsPixmapItemClockMake`: `OriginPoint_ax`, `OriginPoint_ay`, `path`,
   `rotate`, `scale`, `type`). Also progress rings, text widgets, a media viewer and charts.
-  - Themes come from ScreenKey. The SD card holds `/mnt/SDCARD/config.json`.
+  - Themes come from ScreenKey. The SD card holds `/mnt/SDCARD/config.json`. Keys seen so far: `defaultTheme`,
+    `deviceBl`, `deviceVolume`, `enableXIAOZHIAI`, and (read by the program, not in our file) `usbTYpe` — sic —
+    which picks `setusbconfig serial` or `setusbconfig uac1` (USB speaker, no serial port). The value for uac1
+    is unknown. See [call-control.md](call-control.md).
   - **Open question:** can a theme clock keep running on the small screen while the PC sends key pictures?
     V1 SEND_PIXMAP might allow that.
 - No command was found that runs a program. `RemoteCommandExecutor` is only the JSON method dispatcher.

@@ -28,6 +28,12 @@ Commands
                         .exe to extract it from. Checks the file, the device and free space, then asks you
                         to type UPDATE before sending anything. Sent to /data/Upgrade/KeyboardDevice; the
                         device swaps it in only if the checksum matches. There is no automatic way back.
+  hid-install           Put the call-control test (sdcard-tools/hidtest) on the SD card and arm it for ONE
+                        boot: the MK10 comes up as serial + HID headset + sound card, then the boot after is
+                        back to normal. Asks you to type INSTALL first. THIS WRITES TO THE DEVICE.
+  hid                   Call-control test: list the MK10's HID collections, show the lights a meeting app sets
+                        (off-hook, mute, ring, hold), send hook/mute presses, fetch the device's log. Uses HID,
+                        not the serial port, so MK10 Manager can stay open. Needs: pip install hidapi
 
 Common options: --port PORT   --log FILE   --no-dtr
 
@@ -68,6 +74,7 @@ HEADER_LEN_V1 = len(MAGIC_V1) + 16    # V1: magic + type + cmd + len + crc(paylo
 CMD_SHOW_JPG = 100
 CMD_JSON = 101
 MAX_PAYLOAD = 16 * 1024 * 1024
+USB_VID, USB_PID = 0x1D6B, 0x0104   # the serial gadget's generic ID; usbconfig.sh keeps it
 
 TYPE_NAMES = {0: "CMD", 1: "FILE", 2: "ACK", 3: "FILE_ACK"}
 CMD_NAMES = {0: "FIND_DEVICE", 1: "SEND_SYSTEM_DATA", 2: "RELOAD", 3: "GET_THEME", 4: "SET_BACKLIGHT",
@@ -577,7 +584,7 @@ def show_reply(title, pkt):
 def candidate_ports():
     from serial.tools import list_ports
     ports = list(list_ports.comports())
-    likely = [p for p in ports if (p.vid, p.pid) == (0x1D6B, 0x0104)]
+    likely = [p for p in ports if (p.vid, p.pid) == (USB_VID, USB_PID)]
     if not likely:
         likely = [p for p in ports
                   if "ttyACM" in p.device or "usbmodem" in p.device
@@ -2135,6 +2142,319 @@ def cmd_sysdata(args):
     return 0
 
 
+# ---------------------------------------------------------------------------------------------------------------
+# Call-control test: the MK10 as a USB headset (HID telephony + sound card) - sdcard-tools/hidtest/
+
+HID_REPORT_TEL = 1          # telephony: in = hook switch / mute, out = the lights a meeting app sets
+HID_REPORT_VENDOR = 2       # ours: 63 bytes each way, to mk10hid on the device
+HID_VENDOR_LEN = 63
+HID_HOOK, HID_MUTE = 0x01, 0x02
+HID_LIGHTS = ("off-hook", "mute", "ring", "hold")
+HIDTEST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "sdcard-tools", "hidtest")
+HIDTEST_FILES = ("mk10hid", "usbconfig.sh", "mk10loop.sh")
+LUNCH_TESTS = os.path.join(HIDTEST_DIR, os.pardir, "lunch-tests.sh")
+
+
+def _import_hid():
+    try:
+        import hid
+    except ImportError:
+        print("This needs the hidapi package:  py -m pip install hidapi   (Linux: pip install hidapi)")
+        return None
+    return hid
+
+
+class HidLink:
+    """One HID collection of the MK10. Works with either Python package that installs as 'hid'."""
+
+    def __init__(self, hid, path):
+        if hasattr(hid, "device"):          # pip install hidapi
+            self.dev = hid.device()
+            self.dev.open_path(path)
+        else:                               # pip install hid
+            self.dev = hid.Device(path=path)
+
+    def send(self, report_id, payload):
+        data = bytes([report_id]) + bytes(payload) + bytes(HID_VENDOR_LEN - len(payload))
+        return self.dev.write(data)
+
+    def receive(self, timeout_ms):
+        data = self.dev.read(HID_VENDOR_LEN + 1, timeout_ms)
+        return bytes(data or b"")
+
+    def close(self):
+        self.dev.close()
+
+
+def hid_collections(hid):
+    """The MK10's HID collections: Windows lists each one separately, Linux lists the interface once."""
+    return [d for d in hid.enumerate(USB_VID, USB_PID)]
+
+
+def hid_pick_vendor(found):
+    vendor = [d for d in found if d.get("usage_page") == 0xFF00]
+    if vendor:
+        return vendor[0]
+    paths = {d["path"] for d in found}
+    return found[0] if len(paths) == 1 else None    # one node for everything (Linux)
+
+
+def hid_vendor_reply(link, kind, timeout=2.0, seen=None):
+    """Wait for a vendor report starting with kind; anything else read meanwhile goes to seen()."""
+    end = time.time() + timeout
+    while time.time() < end:
+        data = link.receive(100)
+        if len(data) >= 2 and data[0] == HID_REPORT_VENDOR and data[1] == ord(kind):
+            return data[1:]
+        if data and seen:
+            seen(data)
+    return None
+
+
+def hid_ping(link):
+    link.send(HID_REPORT_VENDOR, b"P")
+    r = hid_vendor_reply(link, "P")
+    if r is None:
+        return None
+    u16 = lambda i: (r[i] << 8) | r[i + 1]
+    return {"version": r[1], "lights": r[2], "telephony": r[3],
+            "uptime": struct.unpack(">I", r[4:8])[0], "out": u16(8), "in": u16(10),
+            "errors": u16(12), "dropped": u16(14)}
+
+
+def hid_telephony(link, bits, seen=None):
+    """Ask mk10hid to send a telephony input report. True if it says it went out."""
+    link.send(HID_REPORT_VENDOR, b"T" + bytes([bits]))
+    r = hid_vendor_reply(link, "T", seen=seen)
+    return bool(r and r[1])
+
+
+def hid_fetch_log(link, timeout=5.0):
+    link.send(HID_REPORT_VENDOR, b"L")
+    chunks, end = [], time.time() + timeout
+    while time.time() < end:
+        r = hid_vendor_reply(link, "L", timeout=end - time.time())
+        if r is None:
+            break
+        size = r[3]
+        if size == 0:
+            return b"".join(chunks).decode("utf-8", "replace")
+        chunks.append(bytes(r[4:4 + size]))
+    return None if not chunks else b"".join(chunks).decode("utf-8", "replace") + "\n(log cut short)\n"
+
+
+def describe_lights(bits):
+    return ", ".join("%s %s" % (name, "ON" if bits >> i & 1 else "off") for i, name in enumerate(HID_LIGHTS))
+
+
+def usb_product_names():
+    """What the MK10's USB device calls itself: usbconfig.sh says whether the test ran there."""
+    names = []
+    if sys.platform.startswith("linux"):
+        import glob
+        for dev in glob.glob("/sys/bus/usb/devices/*"):
+            try:
+                ids = [open(os.path.join(dev, f)).read().strip().lower() for f in ("idVendor", "idProduct")]
+                if ids == ["%04x" % USB_VID, "%04x" % USB_PID]:
+                    names.append(open(os.path.join(dev, "product")).read().strip())
+            except OSError:
+                pass
+    elif sys.platform == "win32":
+        import subprocess
+        ps = ("Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -match '^USB\\\\VID_%04X&PID_%04X\\\\' } | "
+              "ForEach-Object { (Get-PnpDeviceProperty -InstanceId $_.InstanceId "
+              "-KeyName DEVPKEY_Device_BusReportedDeviceDesc).Data }" % (USB_VID, USB_PID))
+        try:
+            out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True,
+                                 text=True, timeout=30).stdout
+            names = [line.strip() for line in out.splitlines() if line.strip()]
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return names
+
+
+def _hid_explain_absent():
+    names = usb_product_names()
+    if names:
+        print("The MK10's USB device calls itself: %s" % ", ".join(repr(n) for n in names))
+    for n in names:
+        if "FAILED" in n:
+            print("  -> The test ran, but only the serial port would bind. 'hid' can't read the log without HID,\n"
+                  "     so try 'hid-install --arm-only --no-audio' next boot: that is the smaller set.")
+            return
+        if "call-control" in n:
+            print("  -> The test ran, but no HID collection is visible. Windows may still be installing drivers\n"
+                  "     (give it a minute), or this hidapi build can't see it.")
+            return
+    print("  -> The test didn't run this boot. Either it wasn't armed (hid-install, then power-cycle), or\n"
+          "     KeyboardDevice never called /data/setusbconfig. Power-cycling again puts everything back.")
+
+
+def cmd_hid(args):
+    """Talk to the MK10's HID headset collections. Doesn't use the serial port, so MK10 Manager can stay open."""
+    hid = _import_hid()
+    if not hid:
+        return 1
+    found = hid_collections(hid)
+    if not found:
+        print("No HID collections with the MK10's USB ID (%04X:%04X)." % (USB_VID, USB_PID))
+        _hid_explain_absent()
+        return 1
+    print("The MK10's HID collections:")
+    pages = {0x0B: "Telephony (what meeting apps use)", 0xFF00: "vendor (our channel to mk10hid)"}
+    for d in found:
+        print("  usage page 0x%04X usage 0x%02X  %-36s %s" % (
+            d.get("usage_page", 0), d.get("usage", 0), pages.get(d.get("usage_page"), ""),
+            d.get("product_string") or ""))
+    pick = hid_pick_vendor(found)
+    if not pick:
+        print("\nNo vendor collection to talk to mk10hid through.")
+        return 1
+    try:
+        link = HidLink(hid, pick["path"])
+    except (OSError, IOError, ValueError) as e:
+        print("\nCan't open it: %s" % e)
+        if sys.platform.startswith("linux"):
+            print("On Linux the hidraw node is root-only unless a udev rule says otherwise; try with sudo.")
+        return 1
+    try:
+        ping = hid_ping(link)
+        if ping is None:
+            print("\nmk10hid didn't answer a ping. The relay may not be running; its log can't be read without it.")
+            return 1
+        print("\nmk10hid version %(version)d, up %(uptime)d s, %(out)d reports from the PC, %(in)d to it, "
+              "%(errors)d errors, %(dropped)d dropped" % ping)
+        print("Lights the PC has set: %s" % describe_lights(ping["lights"]))
+        if args.log_only:
+            return _hid_save_log(link)
+        return _hid_watch(link, ping["lights"])
+    finally:
+        link.close()
+
+
+def _hid_save_log(link):
+    text = hid_fetch_log(link)
+    if text is None:
+        print("No log came back.")
+        return 1
+    with open("mk10hid-log.txt", "w", encoding="utf-8") as fh:
+        fh.write(text)
+    print("\n---- the device's test log ----\n%s---- saved as %s ----" % (text, os.path.abspath("mk10hid-log.txt")))
+    return 0
+
+
+def _hid_watch(link, lights):
+    print("\nWatching. In a meeting app, pick the MK10 as the speaker/mic and start a test call; the lights it\n"
+          "sets show up here. Type a letter and press Enter:\n"
+          "  a  answer / go off hook      e  end / hang up      m  mute toggle\n"
+          "  p  ping                      l  fetch the device's log      q  quit")
+    import queue
+    typed = queue.Queue()
+
+    def keyboard():
+        while True:
+            try:
+                typed.put(input().strip().lower())
+            except EOFError:
+                typed.put("q")
+                return
+    threading.Thread(target=keyboard, daemon=True).start()
+    hook = lights & 1               # a headset keeps its hook switch in step with the off-hook light
+
+    def seen(data):
+        nonlocal lights, hook
+        if data[0] != HID_REPORT_VENDOR or len(data) < 3 or data[1] != ord("O"):
+            return                  # Linux also shows our own telephony reports; Windows doesn't
+        raw = data[3:3 + data[2]]
+        if len(raw) >= 2 and raw[0] == HID_REPORT_TEL:
+            if raw[1] != lights:
+                print("%s  PC set lights: %s" % (time.strftime("%H:%M:%S"), describe_lights(raw[1])))
+            lights, hook = raw[1], raw[1] & 1
+        else:
+            print("%s  PC sent another output report: %s" % (time.strftime("%H:%M:%S"), raw.hex(" ")))
+
+    while True:
+        data = link.receive(200)
+        if data:
+            seen(data)
+        try:
+            cmd = typed.get_nowait()
+        except queue.Empty:
+            continue
+        if cmd in ("q", "quit"):
+            return 0
+        if cmd in ("a", "e"):
+            hook = HID_HOOK if cmd == "a" else 0
+            ok = hid_telephony(link, hook, seen)
+            print("  hook switch %s: %s" % ("off hook" if hook else "on hook", "sent" if ok else "NOT sent"))
+        elif cmd == "m":
+            ok = hid_telephony(link, hook | HID_MUTE, seen) and hid_telephony(link, hook, seen)
+            print("  mute toggle: %s" % ("sent" if ok else "NOT sent"))
+        elif cmd == "p":
+            ping = hid_ping(link)
+            print("  " + ("no answer" if ping is None else
+                          "up %(uptime)d s, %(out)d from the PC, %(in)d to it, %(dropped)d dropped" % ping))
+        elif cmd == "l":
+            _hid_save_log(link)
+        elif cmd:
+            print("  ? a, e, m, p, l or q")
+
+
+def hidtest_plan(audio=True, arm_only=False):
+    """(device path, bytes, what) for each file hid-install sends. The arm file goes last, so a partial
+    install never arms anything."""
+    plan = []
+    if not arm_only:
+        with open(LUNCH_TESTS, "rb") as fh:
+            plan.append(("/mnt/SDCARD/lunch.sh", fh.read(), "sdcard-tools/lunch-tests.sh"))
+        for name in HIDTEST_FILES:
+            with open(os.path.join(HIDTEST_DIR, name), "rb") as fh:
+                plan.append(("/mnt/SDCARD/hidtest/" + name, fh.read(), "sdcard-tools/hidtest/" + name))
+    mode = b"hid audio\n" if audio else b"hid\n"
+    plan.append(("/mnt/SDCARD/hid-test-once", mode, "arms the next boot: " + mode.decode().strip()))
+    return plan
+
+
+def cmd_hid_install(args):
+    """Put the call-control test on the SD card and arm it for one boot. THIS WRITES TO THE DEVICE."""
+    try:
+        plan = hidtest_plan(audio=not args.no_audio, arm_only=args.arm_only)
+    except OSError as e:
+        print("Missing a file: %s" % e)
+        return 1
+    for dest, data, what in plan:
+        if data.startswith(b"#!") and b"\r\n" in data:
+            print("%s has Windows (CRLF) line endings and would never run on the device. A fresh git pull\n"
+                  "checks sdcard-tools/ out with LF. Nothing was sent." % what)
+            return 1
+    print("This writes to the MK10's SD card (the same way 'upload' does):")
+    for dest, data, what in plan:
+        print("  %-34s %7d bytes  %s" % (dest, len(data), what))
+    print("\nOn the next boot only, lunch.sh bind-mounts usbconfig.sh over /data/setusbconfig, so the MK10\n"
+          "comes up as serial + HID headset%s. Nothing on the device's own storage changes; the boot after\n"
+          "is back to normal." % ("" if args.no_audio else " + sound card"))
+    if not args.no_audio:
+        print("Windows may make the MK10 its default speaker and mic while the test is on.")
+    link = open_link(args)
+    try:
+        _device_hello(link)
+        if not args.yes and not _confirm("INSTALL", "write these"):
+            return 1
+        link.allow("saveToFile", "setFileCRC")
+        for dest, data, what in plan:
+            print("\n%s" % dest)
+            ok, detail = upload_v2(link, dest, data)
+            print("  %s: %s" % ("Accepted" if ok else "Failed", detail))
+            if not ok:
+                print("\nStopped here. The arm file goes last, so nothing is armed.\nLog: %s" % link.log.path)
+                return 1
+        print("\nArmed. Power-cycle the MK10 (unplug, plug back in), give it 30 seconds, then:\n"
+              "  python mk10probe.py hid\nLog: %s" % link.log.path)
+    finally:
+        link.close()
+    return 0
+
+
 def cmd_theme_strings(args):
     """Read a ScreenKey installer or the device program and print everything that looks theme-shaped."""
     try:
@@ -2847,13 +3167,22 @@ def main():
     p.add_argument("file", help="the KeyboardDevice program file, or the ScreenKey installer .exe to extract it from")
     p.add_argument("--force", action="store_true", help="send even if the device already has this version or newer")
     p.add_argument("--skip-space-check", action="store_true", help="send even if free space can't be read")
+    p = sub.add_parser("hid-install", help="put the call-control (USB headset) test on the card and arm it "
+                                           "for one boot (asks before writing)")
+    common(p)
+    p.add_argument("--no-audio", action="store_true", help="HID only, no sound card")
+    p.add_argument("--arm-only", action="store_true", help="the files are already there: just arm the next boot")
+    p.add_argument("--yes", action="store_true", help="don't ask first (it writes to the device)")
+    p = sub.add_parser("hid", help="call-control test: watch what a meeting app tells the MK10, press its "
+                                   "buttons (no serial port needed; needs hidapi)")
+    p.add_argument("--log-only", action="store_true", help="just fetch the device's test log")
 
     args = ap.parse_args()
     try:                                   # don't crash on consoles that can't show Chinese text
         sys.stdout.reconfigure(errors="replace")
     except (AttributeError, ValueError):
         pass
-    if args.cmd not in ("selftest", "theme-strings", "unpack", "theme-dig", "theme-read", "theme-make-test"):
+    if args.cmd not in ("selftest", "theme-strings", "unpack", "theme-dig", "theme-read", "theme-make-test", "hid"):
         try:
             import serial  # noqa: F401
         except ImportError:
@@ -2864,7 +3193,7 @@ def main():
                "pixmap": cmd_pixmap, "files": cmd_files, "theme-strings": cmd_theme_strings,
                "unpack": cmd_unpack, "theme-dig": cmd_theme_dig, "theme-read": cmd_theme_read,
                "theme-make-test": cmd_theme_make_test, "sysdata": cmd_sysdata, "reload": cmd_reload,
-               "upload": cmd_upload, "delete": cmd_delete}[args.cmd]
+               "upload": cmd_upload, "delete": cmd_delete, "hid": cmd_hid, "hid-install": cmd_hid_install}[args.cmd]
     sys.exit(handler(args))
 
 

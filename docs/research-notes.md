@@ -344,7 +344,7 @@ It settles the things we could not get at from the binary:
 ### A theme can show anything the host names (October 2026)
 
 The decisive test for using themes at all: a copy of the stock theme with one value rebound from `Gpu使用率`
-to the made-up name `mk10test`, installed for one boot by `lunch-theme-test.sh` without the card leaving the
+to the made-up name `mk10test`, installed for one boot by `lunch-tests.sh` (then called `lunch-theme-test.sh`) without the card leaving the
 device. Pushing `mk10test` = 1, 2, 3 over V1 cmd 1 made that number count on the screen, beside the
 untouched CPU control. The device never asked for any name first. Details in `docs/theme-format.md`.
 
@@ -411,7 +411,7 @@ What it settled:
 | Root | ext4, **overlay-mounted**: `/overlay` comes from the UDISK partition, `/rom` is the read-only base |
 | Partitions | `boot-resource`, `env`, `env-redund`, `boot`, `rootfs`; UDISK is the remainder |
 | Tools on board | `busybox`, `adbd`, `nc`, `wget`, `curl`, `tcpdump`, `ntfs-3g`. **No** telnetd, dropbear or ssh |
-| USB gadget | configfs. `setusbconfig` offers `mtp`, `adb`, `rndis`, `adb,mtp`; the ACM serial port we talk to is built by hand in `/data/serial_adb.sh` |
+| USB gadget | configfs. `KeyboardDevice` builds the serial port we talk to with `/data/setusbconfig serial`; the same script also offers `uac1`, `hid`, `uac1,hid`, `rndis`, `mtp`, `adb` and more, each *instead of* serial. (Corrected: this used to say `/data/serial_adb.sh`, which nothing runs.) See [call-control.md](call-control.md) |
 
 Two consequences worth holding on to:
 

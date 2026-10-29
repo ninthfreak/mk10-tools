@@ -48,9 +48,10 @@ and nothing happened — this cannot half-work.
   `.Theme` does not appear in the firmware at all.
 - `/data` is on the **writable overlay** (`/overlay`, from the UDISK partition), so what we put there
   persists and deleting it undoes it.
-- `adbd` is installed and `setusbconfig` supports `adb`, `mtp` and `rndis` — but the ACM serial gadget we
-  talk to is built by hand in `/data/serial_adb.sh`, so switching modes probably takes the serial protocol
-  away with it. `rndis` plus the on-board `nc` is the less invasive route to a shell if we ever want one.
+- `adbd` is installed, and `/data/setusbconfig` supports `adb`, `mtp`, `rndis`, `uac1`, `hid` and `uac1,hid`.
+  `KeyboardDevice` itself runs `/data/setusbconfig serial` to build the port we talk to, and every other mode
+  *replaces* serial rather than adding to it. (This used to say `/data/serial_adb.sh`; nothing runs that.)
+  `hidtest/usbconfig.sh` below is how to add functions *alongside* serial.
 
 ## Why the report is built in RAM
 
@@ -70,13 +71,17 @@ on the card, and it refuses to start with less than 64 MB free.
 If `report.txt` ends with `===== report complete =====`, nothing was lost. `df`, `/proc/partitions` and the
 card's own contents are near the top, so a space problem is visible immediately.
 
-## Trying a theme without touching the card: `lunch-theme-test.sh`
+## One-boot tests without touching the card: `lunch-tests.sh`
+
+(It was called `lunch-theme-test.sh` until the call-control test joined it.)
+
+### Theme test
 
 Upload it as the card's `lunch.sh` and it gives a **one-boot theme switch that undoes itself**:
 
 ```
 python mk10probe.py upload mk10test.Theme --dest /data/theme/MK10/mk10test/mk10test.Theme
-python mk10probe.py upload ../sdcard-tools/lunch-theme-test.sh --dest /mnt/SDCARD/lunch.sh
+python mk10probe.py upload ../sdcard-tools/lunch-tests.sh --dest /mnt/SDCARD/lunch.sh
 python mk10probe.py upload ../sdcard-tools/theme-test-once --dest /mnt/SDCARD/theme-test-once
 ```
 
@@ -94,6 +99,34 @@ and leaves `config.json` alone if it can't find `defaultTheme` in it. Each step 
 Once `lunch.sh` is on the card it stays there, so later tests need only the theme and an arm file.
 `theme-test-once-round2` arms `/data/theme/MK10/mk10test2/mk10test2.Theme`; upload it as
 `/mnt/SDCARD/theme-test-once`.
+
+### Call-control (USB headset) test: `hidtest/`
+
+[docs/call-control.md](../docs/call-control.md) has the why. In short: for one boot the MK10 comes up as
+serial port + HID telephony headset + USB sound card (its own speaker and mic), so meeting apps can treat it
+as a headset.
+
+```
+python mk10probe.py hid-install        # lunch.sh + hidtest/* + the arm file, one INSTALL confirmation
+(power-cycle the MK10)
+python mk10probe.py hid                # needs: pip install hidapi
+```
+
+- `lunch.sh` copies `hidtest/` to `/tmp/mk10hid`, keeps Waveshare's `setusbconfig` there, and **bind-mounts
+  `usbconfig.sh` over `/data/setusbconfig`**. A reboot drops the mount and `/tmp`, so nothing needs restoring.
+- `usbconfig.sh` does what `KeyboardDevice` asks (`serial`) plus HID and audio. It falls back to fewer
+  functions if the controller refuses the set, and passes any other mode to Waveshare's script.
+- `mk10hid` (static ARM, built by `build.sh` from `mk10hid.c`) relays between the HID gadget and the host;
+  `mk10loop.sh` keeps it and the two audio pipes running.
+- The arm file `hid-test-once` holds `hid audio`; `hid-install --no-audio` arms `hid` alone, and
+  `--arm-only` skips the uploads when the files are already on the card.
+- Logs: `/tmp/mk10hid/log.txt` on the device, which `probe hid --log-only` reads back over HID, and one
+  line per arming in `/mnt/SDCARD/hid-test.log`.
+
+Tests: `python -m pytest -q sdcard-tools/hidtest` (Linux/macOS, needs a C compiler). They build the relay for
+the host, drive it through the probe's own HID code, and run both scripts against fake configfs and card
+trees. Both scripts were also run under the MK10's own BusyBox 1.27.2 (ARM, through `qemu-arm-static`), which
+is how we know it has no `setsid`.
 
 ## Rules for anything you put in here
 
