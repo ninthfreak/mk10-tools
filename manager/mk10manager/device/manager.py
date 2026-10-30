@@ -121,6 +121,7 @@ class DeviceManager(QObject):
     status_changed = Signal(str)          # one line for the status bar
     key_event = Signal(int, int, bool)    # row, col, pressed
     device_error = Signal(str)            # error replies from the device
+    frame_done = Signal()                 # the device has drawn the last picture: the next can go now
 
     def __init__(self, port_setting: str = "auto", parent=None):
         super().__init__(parent)
@@ -275,6 +276,7 @@ class DeviceManager(QObject):
                     self._awaiting = None
                     self._misses = 0
                     self._acks = True
+                    self.frame_done.emit()
                 d = pkt.json()
                 if d and (pkt.seq == ERROR_SEQ or d.get("success") is False):
                     self.device_error.emit(str(d.get("errorString") or d))

@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+import time
+
 import pytest
 from PySide6.QtCore import QObject, QRectF, Signal
 from PySide6.QtGui import QImage, QPainter
@@ -291,3 +293,41 @@ def test_audio_action_without_a_backend_reports_why():
     runner.failed.connect(problems.append)
     runner._one({"type": "audio", "target": "output", "mode": "toggle_mute"})
     assert problems and "isn't available" in problems[0]
+
+
+class WobblyAudio(FakeAudio):
+    """A meter that never sits still: every level read is different."""
+
+    def levels(self, want_levels=frozenset()) -> dict:
+        with self.lock:
+            self.level_reads += 1
+            value = 0.2 + 0.7 * (self.level_reads % 9) / 9
+            return {target: value for target in want_levels}
+
+
+def test_meters_move_as_often_as_the_setting_asks(qapp, tmp_path, monkeypatch):
+    """Levels used to be read 10 times a second whatever the setting said, which held meters to about 9
+    pictures a second. Now they're read at the meter rate, and the next picture goes when the MK10 has drawn
+    the last one."""
+    dev = FakeMK10("v2")
+    dev.start()
+    monkeypatch.setenv("MK10_PORT", dev.port)
+    cfg = Config(path=tmp_path / "config.json")
+    cfg.settings["meter_fps"] = 30
+    fake = WobblyAudio()
+    ctl = Controller(cfg, watcher=FakeWatcher(), audio=AudioMonitor(fake))
+    ctl.start()
+    try:
+        assert wait_until(qapp, lambda: ctl.device.is_connected and dev.frames), ctl.device.status
+        assert wait_until(qapp, lambda: ctl._live_targets, 2), "the sample page's meters are live"
+        time.sleep(0.3)
+        start_frames, start_reads, start_levels = len(dev.frames), fake.reads, fake.level_reads
+        wait_until(qapp, lambda: False, 1.5)
+        rate = (len(dev.frames) - start_frames) / 1.5
+        assert rate > 18, "%.1f pictures a second" % rate
+        full = fake.reads - start_reads
+        assert full < (fake.level_reads - start_levels) / 3, "mute and volume aren't read at the meter rate"
+        assert ctl.last_render_ms > 0
+    finally:
+        ctl.shutdown()
+        dev.unplug()

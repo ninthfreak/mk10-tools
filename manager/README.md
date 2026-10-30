@@ -235,11 +235,10 @@ On Windows use the Python inside the app's folder: `.venv\Scripts\python.exe lau
     page on screen actually shows a live meter, and stops the moment you switch away. The *Live level
     meters* switch on the Device and app tab turns it off completely.
   - While a live meter is on screen the whole display picture is redrawn and sent to the MK10 several
-    times a second. *Updates a second* on the Device and app tab sets how often (10 by default). The
-    *Pictures sent* line right above shows the rate you're actually getting and how long it takes to hand
-    one picture to the serial port. That time is this PC's side only — the MK10 decodes and draws it
-    afterwards, which nothing here can measure. A small number means the PC isn't the limit, so turning
-    *Updates a second* up is worth trying.
+    times a second. *Updates a second* on the Device and app tab sets how often (10 by default, up to 30),
+    and the levels are measured that often too. The next picture goes as soon as the MK10 says it has drawn
+    the last one. The *Pictures sent* line right above shows the rate you're actually getting, how long this
+    PC takes to make each picture, and how long the MK10 takes to draw it: whichever is bigger is the limit.
   - **Your setting is remembered**, so changing the default in a later version won't move it. If meters look
     jerky, raise the number yourself.
 - **Your settings, pictures and log** are in the settings folder. The Device and app tab has a button that opens it.

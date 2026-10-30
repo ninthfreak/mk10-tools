@@ -81,6 +81,9 @@ class NullAudio:
     def read(self, want_levels=frozenset()) -> AudioState:
         return AudioState(available=False, note=self.note)
 
+    def levels(self, want_levels=frozenset()) -> dict:
+        return {}
+
     def apply(self, target: str, mode: str, value: int = 0):
         return False, self.note
 
@@ -135,6 +138,13 @@ class LinuxAudio(_VolumeMath):
             sides[target] = Endpoint(friendly or dev_id, self._muted(kind, dev_id), self._volume(kind, dev_id),
                                      self._level(target, dev_id, want_levels))
         return AudioState(sides[OUTPUT], sides[INPUT], True, self.note)
+
+    def levels(self, want_levels=frozenset()) -> dict:
+        """Just the live levels, from the parec readers: no pactl, so it can run many times a second."""
+        if not self.pactl or not self._devices:
+            return {}
+        return {target: self._level(target, self._devices.get(target, (PACTL[target][1], ""))[0], want_levels)
+                for target in (OUTPUT, INPUT)}
 
     def _muted(self, kind, dev):
         out, _ = _run([self.pactl, "get-%s-mute" % kind, dev])
@@ -455,6 +465,29 @@ class WindowsAudio(_VolumeMath):
             enum.release()
         return AudioState(sides[OUTPUT], sides[INPUT], True, self.note)
 
+    def levels(self, want_levels=frozenset()) -> dict:
+        """Just the live levels (the audio engine's peak meters), for reading many times a second."""
+        if not want_levels or not self._com_ready():
+            return {}
+        enum = self._enumerator()
+        if enum is None:
+            return {}
+        out = {}
+        try:
+            for target in (OUTPUT, INPUT):
+                if target not in want_levels:
+                    continue
+                device = self._default_device(enum, target)
+                if device is None:
+                    continue
+                try:
+                    out[target] = self._peak(device)
+                finally:
+                    device.release()
+        finally:
+            enum.release()
+        return out
+
     # ---- changing
     def apply(self, target, mode, value=0):
         if not self._com_ready():
@@ -523,7 +556,8 @@ class AudioMonitor(QObject):
     changed = Signal()
 
     SLOW = 0.5          # seconds between reads when nothing needs a live level
-    FAST = 0.1          # ... and when something does
+    FAST = 0.1          # ... and when something does, unless set_level_rate() says otherwise
+    SWITCHES = 0.25     # while levels are read faster than this, mute, volume and names are read this often
     #: How much of a held peak survives one second. Per *second*, not per read, so the meter falls at the
     #: same speed whatever the poll rate — and gently enough that a few frames a second still look smooth.
     DECAY_PER_SECOND = 0.15
@@ -536,6 +570,8 @@ class AudioMonitor(QObject):
         self._levels_on = True
         self._held = {OUTPUT: 0.0, INPUT: 0.0}
         self._held_at = 0.0
+        self._level_period = None        # seconds between level reads; None: FAST
+        self._full_now = True            # the next read is a full one (mute, volume, names), not levels only
         self._stop = threading.Event()
         self._poke = threading.Event()
         self._thread: threading.Thread | None = None
@@ -563,6 +599,7 @@ class AudioMonitor(QObject):
         new = frozenset(targets) if self._levels_on else frozenset()
         if new != self._want:
             self._want = new
+            self._full_now = True            # start or stop measuring on the backend's side straight away
             self._poke.set()
 
     @property
@@ -573,11 +610,21 @@ class AudioMonitor(QObject):
         self._levels_on = bool(on)
         if not on:
             self._want = frozenset()
+        self._full_now = True
         self._poke.set()
 
     def refresh_soon(self):
         """Read again right away: used straight after a key muted something."""
+        self._full_now = True
         self._poke.set()
+
+    def set_level_rate(self, per_second: float):
+        """How many times a second to read the live levels: the meter rate the screen is drawn at, so a meter
+        can move as often as the MK10 can show it. Mute and volume are still read only every SWITCHES."""
+        period = 1.0 / max(1.0, min(60.0, float(per_second)))
+        if period != self._level_period:
+            self._level_period = period
+            self._poke.set()
 
     def apply(self, target: str, mode: str, value: int = 0):
         """Called from the action worker thread."""
@@ -590,17 +637,29 @@ class AudioMonitor(QObject):
 
     # ---- background thread
     def _run(self):
+        next_full = 0.0
         while not self._stop.is_set():
             want = self._want
+            now = time.monotonic()
+            # Between full reads, only the levels: on Linux a full read starts four pactl processes.
+            levels_only = (want and not self._full_now and now < next_full and self.state.available
+                           and hasattr(self.backend, "levels"))
             try:
-                state = self.backend.read(want)
+                if levels_only:
+                    lv = self.backend.levels(want)
+                    state = replace(self.state, output=replace(self.state.output, level=lv.get(OUTPUT, 0.0)),
+                                    input=replace(self.state.input, level=lv.get(INPUT, 0.0)))
+                else:
+                    self._full_now = False
+                    state = self.backend.read(want)
+                    next_full = now + self.SWITCHES
             except Exception as e:
                 state = AudioState(available=False, note="Reading the sound state failed: %s" % e)
             state = self._hold_peaks(state, want)
             if state != self.state:
                 self.state = state
                 self.changed.emit()
-            self._poke.wait(self.FAST if want else self.SLOW)
+            self._poke.wait((self._level_period or self.FAST) if want else self.SLOW)
             self._poke.clear()
 
     def _hold_peaks(self, state: AudioState, want) -> AudioState:

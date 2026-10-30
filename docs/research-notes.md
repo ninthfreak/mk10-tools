@@ -604,9 +604,15 @@ things follow that matter beyond the table:
 
   What that measurement says, on a real MK10 over USB: **27–31 ms per picture**, so the device can take
   roughly 32–37 a second. At 30 updates a second asked for, the manager achieved 8–9. The device is therefore
-  **not** the bottleneck any more; the remaining ~85 ms a frame is ours, composing the canvas with QPainter
-  and encoding the JPEG on the Qt main thread. That is now the thing worth measuring, and it is a separate
-  problem from the protocol.
+  **not** the bottleneck.
+  - **Corrected 30 October 2026:** this note used to blame ~85 ms a frame of composing and JPEG encoding on
+    the PC. That figure was worked backwards from the 8–9 a second, never measured. Measured (Linux, offscreen):
+    composing the canvas takes 2–4 ms and encoding the JPEG about 3 ms. The real cap was the audio monitor
+    reading live levels only 10 times a second (`AudioMonitor.FAST`), and a picture only goes out when
+    something changed. Levels are now read at the meter rate (a levels-only read between full ones, since on
+    Linux a full read starts four `pactl` processes), and the next picture goes when the device acknowledges
+    the last. With a fake device: 10.0 → 28.0 pictures a second at a setting of 30. The Device and app tab now
+    shows how long making each picture takes on the PC, so the real PC's figure can be read off.
 - **`getFilesBySuffix` returns objects**, `{filePath, crc}`, and the demo asks for `"wav"` **without a dot**,
   listing results as things to hand to `playAudio`. So its search root is probably the sound or upload folder,
   not anywhere a theme lives — which fits every empty answer we got.
