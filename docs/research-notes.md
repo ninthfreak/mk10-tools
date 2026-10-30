@@ -720,3 +720,25 @@ the D-Bus control arrived in v2.25.0 (9 October), so it's young.
 - Called through `busctl --user --json=short`, as its docs do. PySide6's QtDBus works too, but its blocking call
   holds Python's GIL for the whole wait (measured: another thread got 1 tick in a 1-second call), so a slow
   answer would freeze the window. busctl as a subprocess takes about 11 ms a call and blocks nothing.
+
+## Teams: parked (30 October 2026)
+
+The user stopped the Teams work here to get back to the MK10 itself. Everything built stays. Where it stood:
+
+- **Rules settled for it** (now general, see CLAUDE.md): read only what Teams shows; lean on pre-built
+  interfaces; no focus changes, UI interaction or visible effects outside the Manager unless they're the goal.
+- **Reading** (UI Automation labels, call clock, title) has no side effects. Known gap: while the user has one of
+  Teams' own menus open, the call buttons seem to vanish from the accessibility tree, so the Manager may think the
+  call ended (not fixed; proposed fix: keep the last state while a Teams menu is open).
+- **Commands** press Teams' buttons through UI Automation. The user prefers hotkeys or OS calls to driving UI
+  elements, but Teams' shortcuts (Ctrl+Shift+M/O/E) only work with Teams focused, which is a focus change that
+  isn't the goal. Windows 11's Win+Alt+K call mute might reach Teams without focus: untested. Whether a UI
+  Automation press moves Teams' keyboard focus is also untested (only worth testing if the button presses stay).
+- **Start sharing:** the user accepts "bring Teams forward, then Ctrl+Shift+E", ideally through OS calls; the
+  current build presses Share and calls SetFocus instead.
+- **Dropped or not wanted:** reading devices from Teams' menus (needs a menu open), hand raising (the user
+  doesn't care about it), `teams-menu-windows.bat` (relies on opening a menu by hand). Not yet removed from the code.
+- **Wanted, not built:** the Share key naming what's shared when Teams shows it (the Excel file name sits inside
+  the shared content: deeper reading). Devices for the Speakers key and the mic sync: still Windows' defaults.
+- **Excel live share, seen 30 October:** `Button [whiteboard-sharing-controls] 'Stop sharing'`, which the current
+  name-based detection catches; `share-button` stays "Share".
