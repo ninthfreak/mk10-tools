@@ -431,10 +431,10 @@ class DevicePanel(QWidget):
         self.status.setWordWrap(True)
         left.addRow("Status", self.status)
         self.throughput = _muted("")
-        self.throughput.setToolTip("How many whole-canvas pictures a second are going out, and how long the "
-                                   "MK10 takes to draw one — measured from sending it to the device saying "
-                                   "it's done. The next picture is sent as soon as that answer arrives, so "
-                                   "the device sets the pace and this time is the real limit.")
+        self.throughput.setToolTip("How many whole-canvas pictures a second are going out; how long this PC "
+                                   "takes to draw and compress one; and how long the MK10 takes to draw it, "
+                                   "from sending it to the device saying it's done. The next picture is sent "
+                                   "as soon as that answer arrives, so the slower of the two sets the pace.")
         left.addRow("Pictures sent", self.throughput)
         prow = QHBoxLayout()
         self.port = QComboBox()
@@ -570,12 +570,13 @@ class DevicePanel(QWidget):
         gap = now - last_at if last_at else 0.0
         rate = (sent - last_sent) / gap if gap > 0.2 and sent >= last_sent else 0.0
         round_trip = device.last_round_trip_ms
+        here = getattr(self.ctl, "last_render_ms", 0.0)
         if round_trip:
-            self.throughput.setText("%.0f a second, %.0f ms for the MK10 to draw one (%d so far)"
-                                    % (rate, round_trip, sent))
+            self.throughput.setText("%.0f a second; %.0f ms to make one here, %.0f ms for the MK10 to draw it "
+                                    "(%d so far)" % (rate, here, round_trip, sent))
         else:
-            self.throughput.setText("%.0f a second, %.1f ms to send each (%d so far)" % (
-                rate, device.last_frame_ms, sent))
+            self.throughput.setText("%.0f a second; %.0f ms to make one here, %.1f ms to send it (%d so far)" % (
+                rate, here, device.last_frame_ms, sent))
 
     def _fill_ports(self):
         cur = self.ctl.config.settings.get("port", "auto")

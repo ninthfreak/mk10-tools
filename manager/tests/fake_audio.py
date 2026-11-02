@@ -15,9 +15,10 @@ class FakeAudio(_VolumeMath):
             OUTPUT: Endpoint("Test speakers", False, 60, 0.0),
             INPUT: Endpoint("Test microphone", False, 70, 0.0),
         }
-        self.levels = {OUTPUT: 0.0, INPUT: 0.0}
+        self.level_values = {OUTPUT: 0.0, INPUT: 0.0}
         self.asked_for: frozenset = frozenset()
         self.reads = 0
+        self.level_reads = 0
 
     # ---- what the monitor calls
     def read(self, want_levels=frozenset()) -> AudioState:
@@ -26,9 +27,14 @@ class FakeAudio(_VolumeMath):
             self.reads += 1
             sides = {}
             for target, side in self.sides.items():
-                level = self.levels[target] if target in want_levels else 0.0
+                level = self.level_values[target] if target in want_levels else 0.0
                 sides[target] = Endpoint(side.name, side.muted, side.volume, level)
             return AudioState(sides[OUTPUT], sides[INPUT], self.available, "")
+
+    def levels(self, want_levels=frozenset()) -> dict:
+        with self.lock:
+            self.level_reads += 1
+            return {target: self.level_values[target] for target in want_levels}
 
     def apply(self, target, mode, value=0):
         if not self.available:
@@ -50,4 +56,4 @@ class FakeAudio(_VolumeMath):
             self.sides[target] = Endpoint(cur.name, cur.muted if muted is None else muted,
                                           cur.volume if volume is None else volume, cur.level)
             if level is not None:
-                self.levels[target] = level
+                self.level_values[target] = level

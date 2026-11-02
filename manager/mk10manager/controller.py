@@ -112,6 +112,7 @@ class Controller(QObject):
         self._cmd_running: set[str] = set()
         self.app, self.title = "", ""
         self.last_image: QImage | None = None
+        self.last_render_ms = 0.0           # drawing and compressing the last picture sent, on this PC
         self._last_second = None
         self._last_minute = None
         self._last_audio_switches = None
@@ -134,6 +135,7 @@ class Controller(QObject):
         self.device.connected.connect(self._on_connected)
         self.device.disconnected.connect(self._on_disconnected)
         self.device.key_event.connect(self._on_key)
+        self.device.frame_done.connect(self._on_frame_done)
         self.device.status_changed.connect(self._on_device_status)
         self.device.device_error.connect(lambda e: self.notify.emit("MK10 says: %s" % e))
         self.watcher.changed.connect(self._on_app)
@@ -197,6 +199,7 @@ class Controller(QObject):
     def refresh(self, force: bool = False):
         """Redraw everything; send it to the device if it changed (or force)."""
         msg = self.message if self.message and time.time() < self.message_until else None
+        started = time.perf_counter()
         img = self.renderer.compose(self.layout, self.page, self.context(), frozenset(self.pressed),
                                     self.outputs, msg)
         changed = self.last_image is None or img != self.last_image
@@ -205,8 +208,16 @@ class Controller(QObject):
             self.preview_changed.emit(img)
         if (changed or force or self._force_push) and self.device.is_connected:
             self._force_push = False
-            self.device.show(self.renderer.to_jpeg(img))
+            jpeg = self.renderer.to_jpeg(img)
+            self.last_render_ms = (time.perf_counter() - started) * 1000     # drawing and compressing, here
+            self.device.show(jpeg)
         self._dirty = False
+
+    def _on_frame_done(self):
+        """The MK10 has drawn the last picture. If something changed meanwhile, the next one goes now rather
+        than at the next tick."""
+        if self._dirty and self.device.is_connected:
+            self.refresh()
 
     def _on_tick(self):
         now = datetime.now()
@@ -277,6 +288,8 @@ class Controller(QObject):
             # A cap, not a promise: the device's acknowledgements decide the rate it actually achieves.
             fps = max(1, min(30, int(self.config.settings.get("meter_fps", 10) or 10)))
             interval = max(25, int(round(1000 / fps)))
+            if hasattr(self.audio, "set_level_rate"):
+                self.audio.set_level_rate(fps)          # read the levels as often as they're drawn
         else:
             interval = SLOW_TICK_MS
         if self._tick.interval() != interval:
@@ -322,6 +335,8 @@ class Controller(QObject):
             self._last_audio_switches = switches
             self._sync_mic()
             self._evaluate_rules()
+        if self._dirty and self._live_targets and self.device.is_connected and self.device.ready_for_frame:
+            self.refresh()          # a meter moved: show it now, not at the next tick
 
     # ---------------------------------------------------------------- device events
     def _on_connected(self, layout: DeviceLayout):

@@ -106,6 +106,11 @@ format, `docs/call-control.md` for the USB headset test, and `docs/research-note
   D-Bus, shuush's contract) over building and maintaining our own, so there's less for us to keep working.
 - These preferences can pull against each other. Weigh all of them and show the tradeoff; don't pick the one
   that suits an option and leave the others out.
+- **No side effects on the user's screen unless they're the goal.** The Manager must not change window focus,
+  interact with other apps' UI in a way that could interrupt the user's input, or do anything visible outside
+  its own window, *unless that is what the user asked for* (a key meant to bring Teams forward may do exactly
+  that). Gathering information or doing something else never justifies them. Prefer direct OS calls and hotkeys
+  over driving other apps' UI elements, but a hotkey that needs another window focused first is a focus change.
 - Rate **difficulty (x/5)** and **confidence** explicitly. Present recommendations as recommendations, not decisions.
   Keep uncertainty visible.
 - Keep text short and skimmable: short sentences, headers, lists.
